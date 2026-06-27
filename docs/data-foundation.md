@@ -221,6 +221,35 @@ Wait for user approval (nothing publishes without it)
 
 ---
 
+## Supabase Project Status
+
+Supabase project has been created.
+
+Schema applied successfully.
+
+Created tables:
+
+- users
+- creator_dna
+- instagram_accounts
+- instagram_posts
+- daily_decisions
+- decision_candidates
+- carousel_drafts
+- carousel_slides
+- publish_jobs
+- learning_logs
+
+Notes:
+- Row Level Security is enabled.
+- UI is not connected to Supabase yet.
+- No OpenAI API is connected yet.
+- No Instagram API is connected yet.
+- No real publishing exists yet.
+- No API keys or database passwords should be committed.
+
+---
+
 ## Supabase Setup Checklist
 
 Before V2 goes live:
