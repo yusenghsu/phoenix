@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check:supabase": "node --env-file=.env.local node_modules/.bin/tsx scripts/check-supabase-read.ts"
+    "check:supabase": "node --env-file=.env.local node_modules/.bin/tsx scripts/check-supabase-read.ts",
+    "reset:demo": "node --env-file=.env.local node_modules/.bin/tsx scripts/reset-demo-data.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
