@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "check:supabase": "node --env-file=.env.local node_modules/.bin/tsx scripts/check-supabase-read.ts",
-    "reset:demo": "node --env-file=.env.local node_modules/.bin/tsx scripts/reset-demo-data.ts"
+    "reset:demo": "node --env-file=.env.local node_modules/.bin/tsx scripts/reset-demo-data.ts",
+    "cron:daily": "node --env-file=.env.local node_modules/.bin/tsx scripts/run-daily-decision.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
