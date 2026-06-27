@@ -7,9 +7,14 @@ import { PhoenixHeader } from "@/components/PhoenixHeader";
 export default function PublishPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [dbPublish, setDbPublish] = useState<{ scheduledLabel: string } | null>(null);
 
   useEffect(() => {
     setReady(true);
+    fetch("/api/data?type=publish")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setDbPublish(d); })
+      .catch(() => {});
   }, []);
 
   return (
@@ -100,7 +105,7 @@ export default function PublishPage() {
                   }}
                 />
                 <span style={{ color: "#4ade80", fontSize: 12, fontWeight: 500 }}>
-                  Instagram · Scheduled · Today 20:00
+                  Instagram · Scheduled · {dbPublish?.scheduledLabel ?? "Today 20:00"}
                 </span>
               </div>
             </div>

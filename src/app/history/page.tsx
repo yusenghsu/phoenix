@@ -323,10 +323,20 @@ function TimelineCard({ record, index }: { record: DecisionRecord; index: number
 export default function HistoryPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [dbHistory, setDbHistory] = useState<{ todayTopic: string | null; learnings: string[] } | null>(null);
 
   useEffect(() => {
     setReady(true);
+    fetch("/api/data?type=history")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setDbHistory(d); })
+      .catch(() => {});
   }, []);
+
+  const displayLearnings = dbHistory?.learnings ?? LEARNINGS;
+  const displayRecords = dbHistory?.todayTopic
+    ? RECORDS.map((r, i) => i === 0 ? { ...r, topic: dbHistory.todayTopic! } : r)
+    : RECORDS;
 
   return (
     <div
@@ -458,7 +468,7 @@ export default function HistoryPage() {
           {/* Timeline */}
           {ready && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {RECORDS.map((record, i) => (
+              {displayRecords.map((record, i) => (
                 <TimelineCard key={record.topic} record={record} index={i} />
               ))}
             </div>
@@ -488,7 +498,7 @@ export default function HistoryPage() {
               </p>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-                {LEARNINGS.map((item, i) => (
+                {displayLearnings.map((item, i) => (
                   <div
                     key={i}
                     style={{

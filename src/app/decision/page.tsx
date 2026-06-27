@@ -160,9 +160,21 @@ export default function DecisionPage() {
   const [ready, setReady] = useState(false);
   const [toast, setToast] = useState(false);
   const [actionTaken, setActionTaken] = useState<"carousel" | "publish" | null>(null);
+  const [dbDecision, setDbDecision] = useState<{
+    topic: string;
+    confidence: number;
+    factors: typeof FACTORS;
+    rejected: typeof REJECTED;
+    matrix: typeof MATRIX;
+    risk: string;
+  } | null>(null);
 
   useEffect(() => {
     setReady(true);
+    fetch("/api/data?type=decision")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setDbDecision(d); })
+      .catch(() => {});
   }, []);
 
   function handleReject() {
@@ -179,6 +191,13 @@ export default function DecisionPage() {
     setActionTaken("publish");
     setTimeout(() => router.push("/publish"), 800);
   }
+
+  const displayTopic = dbDecision?.topic ?? TOPIC;
+  const displayConfidence = dbDecision?.confidence ?? CONFIDENCE;
+  const displayFactors = dbDecision?.factors ?? FACTORS;
+  const displayRejected = dbDecision?.rejected ?? REJECTED;
+  const displayMatrix = (dbDecision?.matrix ?? MATRIX) as typeof MATRIX;
+  const displayRisk = dbDecision?.risk ?? RISK_TEXT;
 
   return (
     <div className="relative flex min-h-screen flex-col" style={{ background: "#0C0A08" }}>
@@ -271,7 +290,7 @@ export default function DecisionPage() {
                   marginBottom: 16,
                 }}
               >
-                {TOPIC}
+                {displayTopic}
               </h2>
 
               {/* Confidence + main judgment */}
@@ -311,7 +330,7 @@ export default function DecisionPage() {
                         display: "inline-block",
                       }}
                     >
-                      {CONFIDENCE}%
+                      {displayConfidence}%
                     </span>
                   </div>
                   <p
@@ -361,7 +380,7 @@ export default function DecisionPage() {
                   gap: 10,
                 }}
               >
-                {FACTORS.map((f) => (
+                {displayFactors.map((f) => (
                   <div
                     key={f.label}
                     className="card-hover"
@@ -454,7 +473,7 @@ export default function DecisionPage() {
             <div className="animate-fade-up delay-300">
               <SectionLabel>Rejected candidates</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {REJECTED.map((item, i) => (
+                {displayRejected.map((item, i) => (
                   <div
                     key={i}
                     style={{
@@ -520,7 +539,7 @@ export default function DecisionPage() {
             <div className="animate-fade-up delay-300">
               <SectionLabel>Decision Matrix</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {MATRIX.map((row) => (
+                {displayMatrix.map((row) => (
                   <div
                     key={row.topic}
                     style={{
@@ -707,7 +726,7 @@ export default function DecisionPage() {
                   whiteSpace: "pre-line",
                 }}
               >
-                {RISK_TEXT}
+                {displayRisk}
               </p>
             </div>
           )}

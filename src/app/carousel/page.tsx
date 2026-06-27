@@ -220,9 +220,16 @@ export default function CarouselPage() {
   const [ready, setReady] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  const [dbCarousel, setDbCarousel] = useState<{ captionBrief: string; captionFull: string; hashtags: string[] } | null>(null);
   const total = SLIDES.length;
 
-  useEffect(() => { setReady(true); }, []);
+  useEffect(() => {
+    setReady(true);
+    fetch("/api/data?type=carousel")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setDbCarousel(d); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -238,9 +245,13 @@ export default function CarouselPage() {
     setTimeout(() => setToast(null), 3000);
   }
 
+  const captionBrief = dbCarousel?.captionBrief ?? CAPTION_BRIEF;
+  const captionFull = dbCarousel?.captionFull ?? CAPTION_FULL;
+  const hashtags = dbCarousel?.hashtags ?? HASHTAGS;
+
   function handleCopyCaption() {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
-      navigator.clipboard.writeText(CAPTION_FULL).catch(() => {});
+      navigator.clipboard.writeText(captionFull).catch(() => {});
     }
     showToast("Caption copied.");
   }
@@ -404,11 +415,11 @@ export default function CarouselPage() {
               </div>
               {captionExpanded ? (
                 <p style={{ color: "#A09D9A", fontSize: 13, lineHeight: 1.7, letterSpacing: "-0.01em", whiteSpace: "pre-line" }}>
-                  {CAPTION_FULL}
+                  {captionFull}
                 </p>
               ) : (
                 <p style={{ color: "#A09D9A", fontSize: 13, lineHeight: 1.6, letterSpacing: "-0.01em" }}>
-                  {CAPTION_BRIEF}
+                  {captionBrief}
                 </p>
               )}
             </div>
@@ -474,7 +485,7 @@ export default function CarouselPage() {
                 </button>
               </div>
               <p style={{ color: "#3E3B37", fontSize: 11, lineHeight: 1.9, letterSpacing: "0.02em" }}>
-                {HASHTAGS.join("  ")}
+                {hashtags.join("  ")}
               </p>
             </div>
           )}

@@ -117,10 +117,15 @@ export default function Home() {
   const [analyzing, setAnalyzing] = useState(false);
   const [ready, setReady] = useState(false);
   const [scoreVisible, setScoreVisible] = useState(false);
+  const [dbHome, setDbHome] = useState<{ topic: string; score: number; grade: string; mainJudgment: string; whyToday: string } | null>(null);
 
   useEffect(() => {
     setReady(true);
     const t = setTimeout(() => setScoreVisible(true), 600);
+    fetch("/api/data?type=today")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setDbHome(d); })
+      .catch(() => {});
     return () => clearTimeout(t);
   }, []);
 
@@ -130,7 +135,14 @@ export default function Home() {
     return () => clearTimeout(t);
   }, [idx]);
 
-  const decision = DECISIONS[idx];
+  const _base = DECISIONS[idx];
+  const decision = {
+    topic: dbHome && idx === 0 ? dbHome.topic : _base.topic,
+    score: dbHome && idx === 0 ? dbHome.score : _base.score,
+    grade: dbHome && idx === 0 ? dbHome.grade : _base.grade,
+    personality: dbHome && idx === 0 ? dbHome.mainJudgment : _base.personality,
+  };
+  const whyToday = dbHome && idx === 0 ? dbHome.whyToday : WHY_TODAY;
 
   function handleReanalyze() {
     setAnalyzing(true);
@@ -265,7 +277,7 @@ export default function Home() {
                     Why today?
                   </p>
                   <p style={{ color: "#8C8784", fontSize: 12, lineHeight: 1.5, letterSpacing: "-0.01em", marginBottom: 5 }}>
-                    {WHY_TODAY}
+                    {whyToday}
                   </p>
                   <button
                     onClick={() => router.push("/decision")}

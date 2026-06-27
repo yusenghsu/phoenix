@@ -65,10 +65,23 @@ function Divider() {
 export default function SettingsPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
+  const [dbSettings, setDbSettings] = useState<{
+    avoidList: string[];
+    decisionRules: string[];
+    contentRatio: { label: string; pct: number; color: string }[];
+  } | null>(null);
 
   useEffect(() => {
     setReady(true);
+    fetch("/api/data?type=settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setDbSettings(d); })
+      .catch(() => {});
   }, []);
+
+  const displayAvoidList = dbSettings?.avoidList ?? AVOID_LIST;
+  const displayDecisionRules = dbSettings?.decisionRules ?? DECISION_RULES;
+  const displayContentRatio = dbSettings?.contentRatio ?? CONTENT_RATIO;
 
   return (
     <div className="relative flex min-h-screen flex-col" style={{ background: "#0C0A08" }}>
@@ -250,7 +263,7 @@ export default function SettingsPage() {
             <section className="animate-fade-up delay-300">
               <SectionLabel>Content Ratio</SectionLabel>
               <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {CONTENT_RATIO.map(({ label, pct, color }) => (
+                {displayContentRatio.map(({ label, pct, color }) => (
                   <div key={label}>
                     <div
                       className="flex items-center justify-between"
@@ -289,7 +302,7 @@ export default function SettingsPage() {
             <section className="animate-fade-up delay-300">
               <SectionLabel>Phoenix will avoid</SectionLabel>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {AVOID_LIST.map((item) => (
+                {displayAvoidList.map((item) => (
                   <div
                     key={item}
                     className="tag-muted"
@@ -359,7 +372,7 @@ export default function SettingsPage() {
             <section className="animate-fade-up delay-400">
               <SectionLabel>Decision Rules</SectionLabel>
               <div>
-                {DECISION_RULES.map((rule, i) => (
+                {displayDecisionRules.map((rule, i) => (
                   <div
                     key={i}
                     style={{
