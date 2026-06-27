@@ -156,6 +156,16 @@ export default function Home() {
 
         <div className="flex items-center gap-3">
           <button
+            onClick={() => router.push("/settings")}
+            style={{
+              background: "none", border: "none", padding: 0,
+              color: "#2E2C29", fontSize: 11, fontWeight: 400,
+              letterSpacing: "-0.005em",
+            }}
+          >
+            Creator DNA
+          </button>
+          <button
             onClick={() => router.push("/teach")}
             style={{
               background: "none", border: "none", padding: 0,
@@ -163,7 +173,7 @@ export default function Home() {
               letterSpacing: "-0.005em",
             }}
           >
-            Teach Phoenix
+            Teach
           </button>
           <div
             className="flex items-center justify-center rounded-full"
