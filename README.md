@@ -1,36 +1,73 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Phoenix Personal
 
-## Getting Started
+AI brand coach and operating system for daily Instagram carousel decisions.
 
-First, run the development server:
+---
+
+## What is Phoenix?
+
+Phoenix is not a content generator.
+
+Phoenix is an AI brand coach that wakes up at 03:00 every morning, analyzes the market and brand signals, makes the content decision for the day, prepares the Instagram carousel draft and caption, and waits for the creator's approval.
+
+**The creator's role is to review, not to think.**
+
+Decision > Generation.
+
+---
+
+## What Phoenix does
+
+| Feature | Description |
+|---|---|
+| Today's Operating Brief | Daily morning summary — topic selected, carousel ready, timing suggested |
+| Decision Engine | Full explanation of why Phoenix chose today's topic |
+| Carousel Preview | 8-slide Instagram carousel draft with slide copy and caption |
+| Publish Approval | One-tap approval flow |
+| Teach Phoenix | Onboarding wizard to set Brand DNA, taste, and topics |
+| Creator DNA | Phoenix's current understanding of the brand |
+| History & Learning Log | Past decisions, results, and what Phoenix learned |
+
+---
+
+## Run locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Routes
 
-## Learn More
+| Path | Page |
+|---|---|
+| `/` | Today — Operating Brief |
+| `/decision` | Decision Engine |
+| `/carousel` | Carousel Preview |
+| `/publish` | Publish Confirmation |
+| `/teach` | Teach Phoenix (Onboarding) |
+| `/settings` | Creator DNA |
+| `/history` | Decision History |
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Prototype note
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+This is a local clickable V1 prototype.
 
-## Deploy on Vercel
+No real Instagram API, OpenAI API, database, or publishing is connected.
+All data is static mock data.
+No login, no backend, no storage.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Tech stack
+
+- Next.js 15 (App Router)
+- TypeScript
+- Tailwind CSS v4
+- No external AI or data dependencies
