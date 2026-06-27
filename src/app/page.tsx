@@ -156,22 +156,20 @@ export default function Home() {
 
         <div className="flex items-center gap-3">
           <button
+            onClick={() => router.push("/history")}
+            style={{ background: "none", border: "none", padding: 0, color: "#2E2C29", fontSize: 11 }}
+          >
+            History
+          </button>
+          <button
             onClick={() => router.push("/settings")}
-            style={{
-              background: "none", border: "none", padding: 0,
-              color: "#2E2C29", fontSize: 11, fontWeight: 400,
-              letterSpacing: "-0.005em",
-            }}
+            style={{ background: "none", border: "none", padding: 0, color: "#2E2C29", fontSize: 11 }}
           >
             Creator DNA
           </button>
           <button
             onClick={() => router.push("/teach")}
-            style={{
-              background: "none", border: "none", padding: 0,
-              color: "#2E2C29", fontSize: 11, fontWeight: 400,
-              letterSpacing: "-0.005em",
-            }}
+            style={{ background: "none", border: "none", padding: 0, color: "#2E2C29", fontSize: 11 }}
           >
             Teach
           </button>
