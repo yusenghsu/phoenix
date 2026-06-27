@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
@@ -136,66 +137,27 @@ export default function Home() {
       />
 
       {/* ── Nav ── */}
-      <nav
-        className="relative z-10 flex items-center justify-between px-6"
-        style={{ height: 52, borderBottom: "1px solid rgba(255,255,255,0.05)", flexShrink: 0 }}
-      >
-        <div className="flex items-center gap-2">
-          <div
-            className="flex items-center justify-center rounded-[7px]"
-            style={{ width: 22, height: 22, background: "linear-gradient(145deg, #F97316, #FB923C)" }}
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
-              <path d="M5 0.5L6.2 3.6H9.5L6.9 5.5L7.9 8.6L5 6.7L2.1 8.6L3.1 5.5L0.5 3.6H3.8L5 0.5Z" fill="white" />
-            </svg>
-          </div>
-          <span style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 600, letterSpacing: "-0.015em" }}>
-            Phoenix
-          </span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/history")}
-            style={{ background: "none", border: "none", padding: 0, color: "#2E2C29", fontSize: 11 }}
-          >
-            History
-          </button>
-          <button
-            onClick={() => router.push("/settings")}
-            style={{ background: "none", border: "none", padding: 0, color: "#2E2C29", fontSize: 11 }}
-          >
-            Creator DNA
-          </button>
-          <button
-            onClick={() => router.push("/teach")}
-            style={{ background: "none", border: "none", padding: 0, color: "#2E2C29", fontSize: 11 }}
-          >
-            Teach
-          </button>
+      <PhoenixHeader
+        right={
           <div
             className="flex items-center justify-center rounded-full"
-            style={{
-              width: 26, height: 26,
-              background: "rgba(249,115,22,0.1)",
-              color: "#F97316", fontSize: 11, fontWeight: 600,
-            }}
+            style={{ width: 26, height: 26, background: "rgba(249,115,22,0.1)", color: "#F97316", fontSize: 11, fontWeight: 600 }}
           >
             佑
           </div>
-        </div>
-      </nav>
+        }
+      />
 
       {/* ── Content ── */}
       <main
         className="relative z-10 flex flex-col items-center px-6"
-        style={{ paddingTop: 36, paddingBottom: 40 }}
+        style={{ paddingTop: 22, paddingBottom: 40 }}
       >
         <div className="w-full" style={{ maxWidth: 400 }}>
 
           {/* ── Hero ── */}
           {ready && (
-            <div className="animate-fade-up" style={{ marginBottom: 28 }}>
+            <div className="animate-fade-up" style={{ marginBottom: 14 }}>
               <h1
                 style={{
                   color: "#FAFAF9",
@@ -203,7 +165,7 @@ export default function Home() {
                   fontWeight: 580,
                   letterSpacing: "-0.03em",
                   lineHeight: 1.15,
-                  marginBottom: 8,
+                  marginBottom: 4,
                 }}
               >
                 Good morning,{" "}
@@ -254,7 +216,7 @@ export default function Home() {
               <div style={{ opacity: analyzing ? 0.05 : 1, transition: "opacity 0.45s ease" }}>
 
                 {/* Section label */}
-                <div className="flex items-center gap-3" style={{ marginBottom: 20 }}>
+                <div className="flex items-center gap-3" style={{ marginBottom: 14 }}>
                   <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
                   <span
                     style={{
@@ -289,14 +251,14 @@ export default function Home() {
                     fontStyle: "italic",
                     opacity: 0.75,
                     letterSpacing: "-0.01em",
-                    marginBottom: 22,
+                    marginBottom: 12,
                   }}
                 >
                   今天這篇，我很有信心。
                 </p>
 
                 {/* Score row */}
-                <div className="flex items-center justify-between" style={{ marginBottom: 20 }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
                   <div>
                     <p
                       style={{
@@ -314,16 +276,16 @@ export default function Home() {
                 </div>
 
                 {/* Reasons */}
-                <div style={{ marginBottom: 18 }}>
+                <div style={{ marginBottom: 10 }}>
                   <p
                     style={{
                       color: "#6B6865", fontSize: 10, fontWeight: 600,
-                      letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12,
+                      letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8,
                     }}
                   >
                     為什麼今天推薦這篇？
                   </p>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {decision.reasons.map((r, i) => (
                       <p
                         key={i}
@@ -348,7 +310,7 @@ export default function Home() {
                     opacity: 0.5,
                     fontStyle: "italic",
                     letterSpacing: "-0.005em",
-                    marginBottom: 28,
+                    marginBottom: 12,
                   }}
                 >
                   — {decision.personality}

@@ -529,7 +529,10 @@ export default function TeachPage() {
         </div>
 
         {/* Center: Phoenix logo */}
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <button
+          onClick={() => router.push("/")}
+          style={{ display: "flex", alignItems: "center", gap: 7, background: "none", border: "none", padding: 0 }}
+        >
           <div
             style={{
               width: 22, height: 22, borderRadius: 7,
@@ -542,7 +545,7 @@ export default function TeachPage() {
             </svg>
           </div>
           <span style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 600, letterSpacing: "-0.015em" }}>Phoenix</span>
-        </div>
+        </button>
 
         {/* Right: step counter */}
         <span style={{ color: "#3E3B37", fontSize: 11, fontWeight: 500, width: 70, textAlign: "right" }}>

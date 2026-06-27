@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -343,72 +344,23 @@ export default function HistoryPage() {
       />
 
       {/* ── Nav ── */}
-      <nav
-        className="relative z-10 flex items-center justify-between px-6"
-        style={{
-          height: 52,
-          borderBottom: "1px solid rgba(255,255,255,0.04)",
-          flexShrink: 0,
-        }}
-      >
-        <button
-          onClick={() => router.push("/")}
-          className="flex items-center gap-1.5"
-          style={{
-            color: "#52504E",
-            fontSize: 13,
-            background: "none",
-            border: "none",
-            padding: 0,
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-            <path
-              d="M9 2.5L4.5 7L9 11.5"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          Back
-        </button>
-
-        <div className="flex items-center gap-2">
+      <PhoenixHeader
+        right={
           <div
-            className="flex items-center justify-center rounded-[7px]"
             style={{
-              width: 22,
-              height: 22,
-              background: "linear-gradient(145deg, #F97316, #FB923C)",
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: 8,
+              padding: "3px 10px",
+              color: "#52504E",
+              fontSize: 11,
+              fontWeight: 500,
             }}
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
-              <path
-                d="M5 0.5L6.2 3.6H9.5L6.9 5.5L7.9 8.6L5 6.7L2.1 8.6L3.1 5.5L0.5 3.6H3.8L5 0.5Z"
-                fill="white"
-              />
-            </svg>
+            7 decisions logged
           </div>
-          <span style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 600, letterSpacing: "-0.015em" }}>
-            Phoenix
-          </span>
-        </div>
-
-        <div
-          style={{
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid rgba(255,255,255,0.07)",
-            borderRadius: 8,
-            padding: "3px 10px",
-            color: "#52504E",
-            fontSize: 11,
-            fontWeight: 500,
-          }}
-        >
-          7 decisions logged
-        </div>
-      </nav>
+        }
+      />
 
       {/* ── Main ── */}
       <main

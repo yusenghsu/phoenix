@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 export default function PublishPage() {
   const router = useRouter();
@@ -24,24 +25,7 @@ export default function PublishPage() {
       />
 
       {/* ── Nav ── */}
-      <nav
-        className="relative z-10 flex items-center justify-center"
-        style={{ height: 52, borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0 }}
-      >
-        <div className="flex items-center gap-2">
-          <div
-            className="flex items-center justify-center rounded-[7px]"
-            style={{ width: 22, height: 22, background: "linear-gradient(145deg, #F97316, #FB923C)" }}
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
-              <path d="M5 0.5L6.2 3.6H9.5L6.9 5.5L7.9 8.6L5 6.7L2.1 8.6L3.1 5.5L0.5 3.6H3.8L5 0.5Z" fill="white" />
-            </svg>
-          </div>
-          <span style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 600, letterSpacing: "-0.015em" }}>
-            Phoenix
-          </span>
-        </div>
-      </nav>
+      <PhoenixHeader />
 
       {/* ── Main ── */}
       <main

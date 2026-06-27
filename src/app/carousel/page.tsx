@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 // ─── Slide data ────────────────────────────────────────────────────────────────
 
@@ -243,49 +244,23 @@ export default function CarouselPage() {
       </div>
 
       {/* ── Nav ── */}
-      <nav
-        className="relative z-10 flex items-center justify-between px-5"
-        style={{ height: 52, borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0 }}
-      >
-        <button
-          onClick={() => router.push("/")}
-          className="flex items-center gap-1.5"
-          style={{ color: "#52504E", fontSize: 13, background: "none", border: "none", padding: 0 }}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-            <path d="M9 2.5L4.5 7L9 11.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Back
-        </button>
-
-        <div className="flex items-center gap-2">
+      <PhoenixHeader
+        right={
           <div
-            className="flex items-center justify-center rounded-[7px]"
-            style={{ width: 20, height: 20, background: "linear-gradient(145deg, #F97316, #FB923C)" }}
+            style={{
+              background: "rgba(249,115,22,0.08)",
+              border: "1px solid rgba(249,115,22,0.12)",
+              borderRadius: 7,
+              padding: "3px 9px",
+              color: "#F97316",
+              fontSize: 11,
+              fontWeight: 600,
+            }}
           >
-            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden>
-              <path d="M5 0.5L6.2 3.6H9.5L6.9 5.5L7.9 8.6L5 6.7L2.1 8.6L3.1 5.5L0.5 3.6H3.8L5 0.5Z" fill="white" />
-            </svg>
+            {current + 1} / {total}
           </div>
-          <span style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 600, letterSpacing: "-0.015em" }}>
-            Carousel Preview
-          </span>
-        </div>
-
-        <div
-          style={{
-            background: "rgba(249,115,22,0.08)",
-            border: "1px solid rgba(249,115,22,0.12)",
-            borderRadius: 7,
-            padding: "3px 9px",
-            color: "#F97316",
-            fontSize: 11,
-            fontWeight: 600,
-          }}
-        >
-          {current + 1} / {total}
-        </div>
-      </nav>
+        }
+      />
 
       {/* ── Main ── */}
       <main
