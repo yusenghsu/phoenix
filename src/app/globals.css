@@ -181,6 +181,10 @@
   opacity: 0;
 }
 
+/* Input resets */
+input::placeholder { color: #3E3B37; }
+input:focus { outline: none; }
+
 /* Button interactions */
 button:not(:disabled) { cursor: pointer; }
 button:hover:not(:disabled) {

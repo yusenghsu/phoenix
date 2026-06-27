@@ -155,7 +155,16 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span style={{ color: "#52504E", fontSize: 11 }}>Sun · Jun 28</span>
+          <button
+            onClick={() => router.push("/teach")}
+            style={{
+              background: "none", border: "none", padding: 0,
+              color: "#2E2C29", fontSize: 11, fontWeight: 400,
+              letterSpacing: "-0.005em",
+            }}
+          >
+            Teach Phoenix
+          </button>
           <div
             className="flex items-center justify-center rounded-full"
             style={{
