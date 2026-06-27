@@ -91,6 +91,18 @@ Returns JSON for each page type. Falls back to mock data internally if Supabase 
 
 ---
 
+## Data Source Verification
+
+- `/api/health/supabase` verifies production Supabase connectivity.
+- `/api/debug/data-source` verifies whether Phoenix is reading from Supabase or mock fallback.
+- Pages read through `src/lib/data/queries.ts` via `/api/data`.
+- Mock fallback remains active when environment variables are missing or Supabase read fails.
+- No secrets are ever returned by debug routes.
+
+Add `?debug=source` to the homepage URL to see a low-key data source badge at the bottom of the page.
+
+---
+
 ## Local Test
 
 1. Create `.env.local` in the project root (already in `.gitignore` — never commit it)
