@@ -9,19 +9,22 @@ Phoenix will eventually run every day at 03:00 to create the daily operating bri
 ## Current Implementation
 
 Issue #022 creates a protected server-side mock cron route.
+Issue #023 connects it to Vercel Cron (GET support + vercel.json).
 
 ---
 
 ## Route
 
 ```
-POST /api/cron/daily-decision
+GET  /api/cron/daily-decision   ← Vercel Cron
+POST /api/cron/daily-decision   ← manual test
 ```
 
-Header:
+Auth — either header accepted:
 
 ```
 x-cron-secret: your_secret
+Authorization: Bearer your_secret
 ```
 
 ### Response — created
@@ -116,21 +119,60 @@ curl -X POST https://your-domain.vercel.app/api/cron/daily-decision \
 
 ---
 
+## Production Cron
+
+Vercel Cron is configured in `vercel.json`.
+
+Schedule:
+
+```
+0 19 * * *
+```
+
+This runs at 19:00 UTC, which equals 03:00 Taiwan time.
+
+Path:
+
+```
+/api/cron/daily-decision
+```
+
+---
+
 ## Production Setup
 
 1. Add `CRON_SECRET` to Vercel → Settings → Environment Variables.
-2. Redeploy.
-3. Test with the curl command above.
-4. Later: connect to Vercel Cron Jobs or an external scheduler (e.g. cron-job.org).
+2. Ensure `vercel.json` is committed and deployed.
+3. Vercel will call GET `/api/cron/daily-decision` automatically at 19:00 UTC daily.
+
+---
+
+## Manual Production Test
+
+```bash
+curl -X GET https://phoenix-five-beta.vercel.app/api/cron/daily-decision \
+  -H "x-cron-secret: YOUR_CRON_SECRET"
+```
+
+Expected: `ok: true`
 
 ---
 
 ## Security
 
-- Route requires `x-cron-secret` header.
+- Route requires `x-cron-secret` or `Authorization: Bearer` header.
 - Returns 401 if missing or incorrect.
 - Service role key is server-side only — never returned, never exposed.
 - No secrets in any response.
+
+---
+
+## Notes
+
+- Vercel Cron uses UTC.
+- Phoenix only creates one daily decision per day.
+- If today already exists, no duplicate is created.
+- No OpenAI or Instagram is connected yet.
 
 ---
 
@@ -139,7 +181,6 @@ curl -X POST https://your-domain.vercel.app/api/cron/daily-decision \
 - Mock decision engine only.
 - No OpenAI yet.
 - No Instagram signal yet.
-- No automatic scheduler enabled yet.
 - No real publishing.
 
 ---

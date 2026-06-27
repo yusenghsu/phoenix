@@ -2,11 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
 import { runDailyDecision } from "@/lib/data/daily-decision";
 
-export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
+function isAuthorized(req: NextRequest): boolean {
   const expected = process.env.CRON_SECRET;
+  if (!expected) return false;
 
-  if (!expected || secret !== expected) {
+  const header = req.headers.get("x-cron-secret");
+  if (header === expected) return true;
+
+  const auth = req.headers.get("authorization");
+  if (auth === `Bearer ${expected}`) return true;
+
+  return false;
+}
+
+async function handle(req: NextRequest) {
+  if (!isAuthorized(req)) {
     return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
   }
 
@@ -25,4 +35,12 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json(result);
+}
+
+export async function GET(req: NextRequest) {
+  return handle(req);
+}
+
+export async function POST(req: NextRequest) {
+  return handle(req);
 }
