@@ -221,6 +221,7 @@ export default function CarouselPage() {
   const [toast, setToast] = useState<string | null>(null);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [dbCarousel, setDbCarousel] = useState<{ captionBrief: string; captionFull: string; hashtags: string[] } | null>(null);
+  const [approving, setApproving] = useState(false);
   const total = SLIDES.length;
 
   useEffect(() => {
@@ -243,6 +244,15 @@ export default function CarouselPage() {
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 3000);
+  }
+
+  async function handleApprove() {
+    setApproving(true);
+    await Promise.all([
+      fetch("/api/actions/approve", { method: "POST" }).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 600)),
+    ]);
+    router.push("/publish");
   }
 
   const captionBrief = dbCarousel?.captionBrief ?? CAPTION_BRIEF;
@@ -429,7 +439,8 @@ export default function CarouselPage() {
           {ready && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <button
-                onClick={() => router.push("/publish")}
+                onClick={handleApprove}
+                disabled={approving}
                 style={{
                   width: "100%", height: 48,
                   borderRadius: 14,
@@ -438,9 +449,11 @@ export default function CarouselPage() {
                   fontSize: 14, fontWeight: 600,
                   letterSpacing: "-0.01em",
                   border: "none",
+                  opacity: approving ? 0.6 : 1,
+                  transition: "opacity 0.2s",
                 }}
               >
-                Approve &amp; Publish
+                {approving ? "Scheduling..." : "Approve & Publish"}
               </button>
 
               <button

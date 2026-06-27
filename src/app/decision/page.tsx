@@ -177,7 +177,8 @@ export default function DecisionPage() {
       .catch(() => {});
   }, []);
 
-  function handleReject() {
+  async function handleReject() {
+    await fetch("/api/actions/reject", { method: "POST" }).catch(() => {});
     setToast(true);
     setTimeout(() => setToast(false), 3000);
   }
@@ -187,9 +188,13 @@ export default function DecisionPage() {
     setTimeout(() => router.push("/carousel"), 800);
   }
 
-  function handleForcePublish() {
+  async function handleForcePublish() {
     setActionTaken("publish");
-    setTimeout(() => router.push("/publish"), 800);
+    await Promise.all([
+      fetch("/api/actions/force-publish", { method: "POST" }).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 800)),
+    ]);
+    router.push("/publish");
   }
 
   const displayTopic = dbDecision?.topic ?? TOPIC;
