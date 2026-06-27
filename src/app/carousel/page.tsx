@@ -297,11 +297,12 @@ export default function CarouselPage() {
               aspectRatio: "1 / 1",
               borderRadius: 16,
               overflow: "hidden",
-              border: "1px solid rgba(255,255,255,0.06)",
+              border: "1px solid rgba(255,255,255,0.07)",
               marginBottom: 10,
               position: "relative",
               flexShrink: 0,
               alignSelf: "center",
+              boxShadow: "0 8px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3)",
             }}>
               <div key={current} className="animate-slide-in" style={{ position: "absolute", inset: 0 }}>
                 <SlideContent slide={SLIDES[current]} total={total} />
@@ -315,6 +316,7 @@ export default function CarouselPage() {
               <button
                 onClick={() => setCurrent((i) => Math.max(i - 1, 0))}
                 disabled={current === 0}
+                className="nav-arrow"
                 style={{
                   width: 32, height: 32, borderRadius: 8,
                   background: "rgba(255,255,255,0.04)",
@@ -346,6 +348,7 @@ export default function CarouselPage() {
               <button
                 onClick={() => setCurrent((i) => Math.min(i + 1, total - 1))}
                 disabled={current === total - 1}
+                className="nav-arrow"
                 style={{
                   width: 32, height: 32, borderRadius: 8,
                   background: "rgba(255,255,255,0.04)",

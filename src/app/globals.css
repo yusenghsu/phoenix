@@ -186,13 +186,130 @@ input::placeholder { color: #3E3B37; }
 input:focus { outline: none; }
 
 /* Button interactions */
-button:not(:disabled) { cursor: pointer; }
+button:not(:disabled) {
+  cursor: pointer;
+  transition: filter 0.18s ease, transform 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
 button:hover:not(:disabled) {
   filter: brightness(0.88);
-  transition: filter 0.18s ease;
 }
 button:active:not(:disabled) {
-  filter: brightness(0.78);
-  transform: scale(0.982);
-  transition: filter 0.08s ease, transform 0.08s ease;
+  filter: brightness(0.76);
+  transform: scale(0.978);
+}
+
+/* ── Card hover lift ──────────────────────────────── */
+.card-hover {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.25s ease;
+}
+.card-hover:hover {
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.38), 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.card-hover:active {
+  transform: translateY(0);
+  transition-duration: 0.1s;
+}
+
+/* ── Nav buttons ──────────────────────────────────── */
+.nav-btn {
+  transition: color 0.15s ease, opacity 0.15s ease;
+}
+.nav-btn--active {
+  color: #F97316;
+  opacity: 0.82;
+}
+.nav-btn--inactive {
+  color: #3E3B37;
+  opacity: 1;
+}
+.nav-btn--inactive:hover {
+  color: rgba(249, 115, 22, 0.5);
+}
+
+/* ── Carousel nav arrows ──────────────────────────── */
+.nav-arrow {
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.nav-arrow:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  color: #FAFAF9 !important;
+}
+
+/* ── Score bar entry animation ─────────────────────── */
+@keyframes bar-expand {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+.bar-fill {
+  transform-origin: left center;
+  animation: bar-expand 0.75s cubic-bezier(0.16, 1, 0.3, 1) 0.25s both;
+}
+
+/* ── Score ring pulse glow ────────────────────────── */
+@keyframes score-glow {
+  0%, 100% { filter: drop-shadow(0 0 0px rgba(249, 115, 22, 0)); }
+  50%       { filter: drop-shadow(0 0 10px rgba(249, 115, 22, 0.32)); }
+}
+.score-glow {
+  animation: score-glow 3.5s ease-in-out 2s infinite;
+}
+
+/* ── Status dot pulses ────────────────────────────── */
+@keyframes dot-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(34, 197, 94, 0.5); }
+  50%       { box-shadow: 0 0 10px rgba(34, 197, 94, 0.9), 0 0 20px rgba(34, 197, 94, 0.25); }
+}
+.dot-pulse { animation: dot-pulse 2.5s ease-in-out infinite; }
+
+@keyframes orange-dot-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(249, 115, 22, 0.55); }
+  50%       { box-shadow: 0 0 10px rgba(249, 115, 22, 0.95), 0 0 20px rgba(249, 115, 22, 0.25); }
+}
+.dot-orange-pulse { animation: orange-dot-pulse 2.5s ease-in-out infinite; }
+
+/* ── Tag hover ─────────────────────────────────────── */
+.tag-orange {
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+.tag-orange:hover {
+  background: rgba(249, 115, 22, 0.12) !important;
+  border-color: rgba(249, 115, 22, 0.28) !important;
+}
+.tag-muted {
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.tag-muted:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #8C8784 !important;
+}
+
+/* ── Additional delay utilities ────────────────────── */
+.delay-150  { animation-delay: 150ms; }
+.delay-250  { animation-delay: 250ms; }
+.delay-350  { animation-delay: 350ms; }
+.delay-450  { animation-delay: 450ms; }
+.delay-800  { animation-delay: 800ms; }
+.delay-900  { animation-delay: 900ms; }
+.delay-1000 { animation-delay: 1000ms; }
+
+/* ── Reduced motion ─────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-fade-in,
+  .animate-slide-in,
+  .animate-scale-in {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  .card-hover,
+  .card-hover:hover { transform: none !important; box-shadow: none !important; }
+  .bar-fill          { animation: none !important; transform: none !important; }
+  .score-glow,
+  .dot-pulse,
+  .dot-orange-pulse  { animation: none !important; }
+  button:not(:disabled) { transition: none !important; }
 }

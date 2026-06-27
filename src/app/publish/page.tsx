@@ -92,11 +92,11 @@ export default function PublishPage() {
                 }}
               >
                 <div
+                  className="dot-pulse"
                   style={{
                     width: 5, height: 5,
                     borderRadius: "50%",
                     background: "#22c55e",
-                    boxShadow: "0 0 5px rgba(34,197,94,0.8)",
                   }}
                 />
                 <span style={{ color: "#4ade80", fontSize: 12, fontWeight: 500 }}>

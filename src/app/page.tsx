@@ -65,7 +65,7 @@ function ScoreRing({
   const offset = visible ? circ * (1 - score / 100) : circ;
 
   return (
-    <div style={{ position: "relative", width: 70, height: 70, flexShrink: 0 }}>
+    <div className={visible ? "score-glow" : ""} style={{ position: "relative", width: 70, height: 70, flexShrink: 0 }}>
       <svg width="70" height="70" viewBox="0 0 70 70" style={{ position: "absolute", inset: 0 }} aria-hidden>
         <defs>
           <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -281,8 +281,15 @@ export default function Home() {
                     Ready to publish
                   </p>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8, rowGap: 4 }}>
-                    {READINESS.map((item) => (
-                      <div key={item} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    {READINESS.map((item, i) => (
+                      <div
+                        key={item}
+                        className="animate-fade-up"
+                        style={{
+                          display: "flex", alignItems: "center", gap: 5,
+                          animationDelay: `${300 + i * 80}ms`,
+                        }}
+                      >
                         <Check />
                         <span style={{ color: "#6B6865", fontSize: 11, letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {item}

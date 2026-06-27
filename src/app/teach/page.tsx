@@ -34,6 +34,7 @@ function StepTitle({ tag, title, subtitle }: { tag?: string; title: string; subt
 function DisplayChip({ label }: { label: string }) {
   return (
     <div
+      className="tag-orange"
       style={{
         display: "inline-flex", alignItems: "center",
         padding: "7px 14px", borderRadius: 20,
@@ -73,6 +74,7 @@ function Step1() {
         在我每天凌晨 03:00 開始工作前，先讓我認識你的品牌、品味與內容方向。
       </p>
       <div
+        className="card-hover"
         style={{
           padding: "20px 22px", borderRadius: 16,
           background: "rgba(255,255,255,0.025)",

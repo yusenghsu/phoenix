@@ -136,6 +136,7 @@ export default function SettingsPage() {
                 {BRAND_VOICE_TAGS.map((tag) => (
                   <span
                     key={tag}
+                    className="tag-orange"
                     style={{
                       display: "inline-flex",
                       padding: "6px 13px",
@@ -179,6 +180,7 @@ export default function SettingsPage() {
                 {METRIC_CARDS.map((m) => (
                   <div
                     key={m.label}
+                    className="card-hover"
                     style={{
                       flex: 1,
                       padding: "14px 13px",
@@ -290,6 +292,7 @@ export default function SettingsPage() {
                 {AVOID_LIST.map((item) => (
                   <div
                     key={item}
+                    className="tag-muted"
                     style={{
                       display: "inline-flex",
                       alignItems: "center",

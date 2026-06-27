@@ -115,6 +115,7 @@ function ScoreBar({ value, active }: { value: number; active: boolean }) {
       }}
     >
       <div
+        className="bar-fill"
         style={{
           height: "100%",
           width: `${value}%`,
@@ -275,6 +276,7 @@ export default function DecisionPage() {
 
               {/* Confidence + main judgment */}
               <div
+                className="card-hover"
                 style={{
                   padding: "16px 18px",
                   borderRadius: 14,
@@ -362,6 +364,7 @@ export default function DecisionPage() {
                 {FACTORS.map((f) => (
                   <div
                     key={f.label}
+                    className="card-hover"
                     style={{
                       padding: "14px 14px",
                       borderRadius: 12,

@@ -96,16 +96,14 @@ export function PhoenixHeader({ variant = "full", right }: PhoenixHeaderProps) {
               <button
                 key={href}
                 onClick={() => router.push(href)}
+                className={`nav-btn ${active ? "nav-btn--active" : "nav-btn--inactive"}`}
                 style={{
                   background: "none",
                   border: "none",
                   padding: "4px 0",
-                  color: active ? "#F97316" : "#3E3B37",
                   fontSize: 12,
                   fontWeight: active ? 500 : 400,
                   letterSpacing: active ? "-0.005em" : "0.01em",
-                  opacity: active ? 0.82 : 1,
-                  transition: "color 0.15s ease, opacity 0.15s ease",
                 }}
               >
                 {label}

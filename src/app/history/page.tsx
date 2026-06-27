@@ -211,12 +211,12 @@ function TimelineCard({ record, index }: { record: DecisionRecord; index: number
           <div className="flex items-center gap-1.5">
             {record.isToday && (
               <div
+                className="dot-orange-pulse"
                 style={{
                   width: 5,
                   height: 5,
                   borderRadius: "50%",
                   background: "#F97316",
-                  boxShadow: "0 0 5px rgba(249,115,22,0.7)",
                   flexShrink: 0,
                 }}
               />
@@ -399,6 +399,7 @@ export default function HistoryPage() {
               {SUMMARY.map((s) => (
                 <div
                   key={s.title}
+                  className="card-hover"
                   style={{
                     flex: 1,
                     padding: "14px 13px",
