@@ -41,6 +41,17 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ---
 
+## Deploy to Vercel
+
+1. Push repo to GitHub
+2. Go to [vercel.com](https://vercel.com) → New Project → Import `phoenix`
+3. Framework: Next.js (auto-detected)
+4. Click Deploy — no environment variables needed
+
+See [`docs/deploy.md`](docs/deploy.md) for full deploy guide.
+
+---
+
 ## Routes
 
 | Path | Page |
@@ -57,17 +68,16 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ## Prototype note
 
-This is a local clickable V1 prototype.
+This is a V1 prototype using static mock data only.
 
 No real Instagram API, OpenAI API, database, or publishing is connected.
-All data is static mock data.
 No login, no backend, no storage.
 
 ---
 
 ## Tech stack
 
-- Next.js 15 (App Router)
+- Next.js 16 (App Router)
 - TypeScript
 - Tailwind CSS v4
 - No external AI or data dependencies
