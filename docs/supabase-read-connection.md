@@ -88,3 +88,44 @@ Returns JSON for each page type. Falls back to mock data internally if Supabase 
 - No Instagram
 - No real publishing
 - Slides in `/carousel` use hardcoded gradients and line splits — only caption and hashtags are from DB
+
+---
+
+## Local Test
+
+1. Create `.env.local` in the project root (already in `.gitignore` — never commit it)
+2. Add:
+   ```
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+   ```
+3. Run:
+   ```
+   npm run check:supabase
+   ```
+
+Expected output:
+
+```
+Phoenix — Supabase Read Check
+─────────────────────────────
+  users: 1 row
+  creator_dna: 1 row
+  daily_decisions: 1 row
+  carousel_slides: 8 rows
+  learning_logs: 5 rows
+
+Today's decision:
+  topic:      退休不是 65 歲開始
+  confidence: 92
+  status:     approved
+
+✓ Supabase read check complete.
+```
+
+If env variables are missing:
+
+```
+Missing Supabase environment variables.
+Create .env.local and set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.
+```
