@@ -6,50 +6,79 @@ import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-const DATA = {
-  topic: "退休不是65歲開始",
-  confidence: 92,
-  grade: "A+",
+const TOPIC = "退休不是 65 歲開始";
+const CONFIDENCE = 92;
 
-  whyToday: [
-    "昨天開始，退休相關的討論明顯升溫。",
-    "你的品牌已經九天沒有談過退休了。",
-    "今天發布，能強化你在這個議題上的定位。",
-    "我建議今天就發。",
-  ],
-
-  rejected: [
-    {
-      topic: "AI 會取代保險業務嗎？",
-      category: "AI",
-      reason:
-        "這個主題雖然有流量，但與你的品牌定位不符。你的受眾更需要的是信任感，而不是焦慮感。",
-    },
-    {
-      topic: "品牌故事：我為什麼選擇這個行業",
-      category: "Brand",
-      reason:
-        "這是一篇值得發布的內容，但上週你剛發過個人故事系列。太接近容易讓受眾感到重複。建議兩週後再發。",
-    },
-    {
-      topic: "定期定額 vs 一次投入",
-      category: "Investment",
-      reason:
-        "投資話題本週競爭激烈，多個帳號同時在討論相似主題。在這個時間點發，你的聲音會被稀釋。",
-    },
-  ],
-
-  expected: {
-    share: { value: "高", detail: "預估分享率高於你過去 30 天平均的 2.4 倍" },
-    save: { value: "極高", detail: "退休類內容的收藏率是你帳號平均的 3.1 倍" },
-    reach: { value: "1,200–2,800", detail: "根據你近期的平均觸及與本週趨勢估算" },
+const FACTORS = [
+  {
+    label: "Market Signal",
+    score: 84,
+    text: "退休相關討論正在升溫，但尚未過度擁擠。",
   },
+  {
+    label: "Creator DNA Fit",
+    score: 96,
+    text: "符合小佑「一針見血、解開疑問」的內容風格。",
+  },
+  {
+    label: "Brand Memory",
+    score: 91,
+    text: "強化小佑在「人生選擇」與「提前規劃」的品牌記憶。",
+  },
+  {
+    label: "Share Worthiness",
+    score: 89,
+    text: "容易被分享給正在思考未來、財務與人生選擇的人。",
+  },
+];
 
-  risk:
-    "如果今天不發布，這個話題的熱度在未來 48–72 小時內會逐漸下降。等到下週再發，這篇的觸及可能減少 30–40%。此外，你的品牌在退休議題上的空白期越長，受眾會越難把你與這個領域連結在一起。今天是一個相對理想的時間點。",
-};
+const WHY_TODAY_BODY = `退休不是一個突然爆紅的題目。\n\n它正在慢慢升溫，而且你的品牌最近七天沒有延續這條線。\n\n如果今天接上，Phoenix 判斷這篇不只是單篇內容，而是可以重新啟動一個系列。`;
+const WHY_TODAY_HIGHLIGHT = "今天不是追流量，而是延續品牌記憶。";
 
-// ─── Small components ─────────────────────────────────────────────────────────
+const REJECTED = [
+  {
+    topic: "AI 會淘汰保險業務嗎？",
+    signal: "Market Signal: High",
+    reason:
+      "流量可能高，但今天容易變成跟風。除非能接回小佑的保險觀點，否則不推薦。",
+  },
+  {
+    topic: "努力沒有結果怎麼辦？",
+    signal: "Emotional Signal: Medium",
+    reason: "情緒共鳴夠，但容易落入雞湯。Phoenix 不建議今天做。",
+  },
+  {
+    topic: "快速成交的三個技巧",
+    signal: "Conversion Signal: Medium",
+    reason: "短期有用，但會削弱小佑的長期品牌深度。",
+  },
+];
+
+type RiskLevel = "Low" | "Medium" | "High";
+
+const MATRIX: {
+  topic: string;
+  market: number;
+  brand: number;
+  share: number;
+  risk: RiskLevel;
+  selected: boolean;
+}[] = [
+  { topic: "退休不是 65 歲開始", market: 84, brand: 96, share: 89, risk: "Low", selected: true },
+  { topic: "AI 會淘汰保險業務嗎？", market: 93, brand: 64, share: 76, risk: "High", selected: false },
+  { topic: "努力沒有結果怎麼辦？", market: 68, brand: 58, share: 61, risk: "Medium", selected: false },
+  { topic: "快速成交的三個技巧", market: 59, brand: 42, share: 49, risk: "High", selected: false },
+];
+
+const RECOMMENDATION_REASONS = [
+  "延續小佑的品牌記憶",
+  "打中讀者正在思考的痛點",
+  "讓內容有被收藏與分享的理由",
+];
+
+const RISK_TEXT = `如果今天不發，退休系列的品牌記憶會中斷。\n\n這個題目不是短期爆點，而是長期信任累積的入口。\n\nPhoenix 判斷今天是適合接上的時間點。`;
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -70,109 +99,56 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function Divider() {
   return (
-    <div
-      style={{ height: 1, background: "rgba(255,255,255,0.05)", margin: "36px 0" }}
-    />
+    <div style={{ height: 1, background: "rgba(255,255,255,0.05)", margin: "36px 0" }} />
   );
 }
 
-function RejectedCard({
-  item,
-}: {
-  item: (typeof DATA.rejected)[0];
-}) {
+function ScoreBar({ value, active }: { value: number; active: boolean }) {
   return (
     <div
       style={{
-        padding: "18px 20px",
-        borderRadius: 14,
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.05)",
-        marginBottom: 10,
+        height: 2,
+        background: "rgba(255,255,255,0.06)",
+        borderRadius: 1,
+        overflow: "hidden",
+        marginTop: 5,
       }}
     >
       <div
-        className="flex items-start justify-between gap-3"
-        style={{ marginBottom: 10 }}
-      >
-        <p
-          style={{
-            color: "#FAFAF9",
-            fontSize: 14,
-            fontWeight: 500,
-            letterSpacing: "-0.01em",
-            lineHeight: 1.35,
-            flex: 1,
-          }}
-        >
-          {item.topic}
-        </p>
-        <span
-          style={{
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid rgba(255,255,255,0.07)",
-            borderRadius: 6,
-            padding: "3px 8px",
-            fontSize: 10,
-            color: "#52504E",
-            fontWeight: 500,
-            letterSpacing: "0.04em",
-            flexShrink: 0,
-          }}
-        >
-          {item.category}
-        </span>
-      </div>
-      <p
         style={{
-          color: "#6B6865",
-          fontSize: 13,
-          lineHeight: 1.6,
-          letterSpacing: "-0.005em",
+          height: "100%",
+          width: `${value}%`,
+          background: active ? "#F97316" : "rgba(255,255,255,0.15)",
+          borderRadius: 1,
         }}
-      >
-        {item.reason}
-      </p>
+      />
     </div>
   );
 }
 
-function ExpectedCard({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail: string;
-}) {
+function RiskBadge({ risk }: { risk: RiskLevel }) {
+  const map = {
+    Low: { color: "rgba(74,222,128,0.8)", bg: "rgba(34,197,94,0.06)", border: "rgba(34,197,94,0.13)" },
+    Medium: { color: "#FB923C", bg: "rgba(249,115,22,0.07)", border: "rgba(249,115,22,0.14)" },
+    High: { color: "#6B6865", bg: "rgba(255,255,255,0.03)", border: "rgba(255,255,255,0.07)" },
+  };
+  const s = map[risk];
   return (
-    <div
+    <span
       style={{
-        flex: 1,
-        padding: "18px 16px",
-        borderRadius: 14,
-        background: "rgba(255,255,255,0.02)",
-        border: "1px solid rgba(255,255,255,0.05)",
+        display: "inline-flex",
+        padding: "2px 8px",
+        borderRadius: 20,
+        background: s.bg,
+        border: `1px solid ${s.border}`,
+        color: s.color,
+        fontSize: 10,
+        fontWeight: 500,
+        letterSpacing: "0.01em",
       }}
     >
-      <p style={{ color: "#3E3B37", fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
-        {label}
-      </p>
-      <p
-        style={{
-          color: "#FAFAF9",
-          fontSize: 20,
-          fontWeight: 700,
-          letterSpacing: "-0.03em",
-          marginBottom: 6,
-          lineHeight: 1,
-        }}
-      >
-        {value}
-      </p>
-      <p style={{ color: "#52504E", fontSize: 11, lineHeight: 1.5 }}>{detail}</p>
-    </div>
+      {risk}
+    </span>
   );
 }
 
@@ -181,26 +157,30 @@ function ExpectedCard({
 export default function DecisionPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const [approved, setApproved] = useState<"approve" | "reject" | "force" | null>(null);
+  const [toast, setToast] = useState(false);
+  const [actionTaken, setActionTaken] = useState<"carousel" | "publish" | null>(null);
 
   useEffect(() => {
     setReady(true);
   }, []);
 
-  function handleAction(action: "approve" | "reject" | "force") {
-    setApproved(action);
-    if (action === "approve") {
-      setTimeout(() => router.push("/carousel"), 900);
-    } else if (action === "force") {
-      setTimeout(() => router.push("/publish"), 900);
-    }
+  function handleReject() {
+    setToast(true);
+    setTimeout(() => setToast(false), 3000);
+  }
+
+  function handleViewCarousel() {
+    setActionTaken("carousel");
+    setTimeout(() => router.push("/carousel"), 800);
+  }
+
+  function handleForcePublish() {
+    setActionTaken("publish");
+    setTimeout(() => router.push("/publish"), 800);
   }
 
   return (
-    <div
-      className="relative flex min-h-screen flex-col"
-      style={{ background: "#0C0A08" }}
-    >
+    <div className="relative flex min-h-screen flex-col" style={{ background: "#0C0A08" }}>
       {/* Ambient */}
       <div
         aria-hidden
@@ -211,72 +191,114 @@ export default function DecisionPage() {
         }}
       />
 
+      {/* Toast */}
+      <div
+        className="pointer-events-none fixed z-50"
+        style={{
+          top: 20,
+          left: "50%",
+          transform: `translateX(-50%) translateY(${toast ? 0 : -8}px)`,
+          opacity: toast ? 1 : 0,
+          transition: "opacity 0.3s ease, transform 0.3s ease",
+        }}
+      >
+        <div
+          style={{
+            background: "rgba(14,10,6,0.97)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 20,
+            padding: "8px 16px",
+            backdropFilter: "blur(20px)",
+          }}
+        >
+          <span style={{ color: "#8C8784", fontSize: 13 }}>
+            Phoenix will re-analyze tonight.
+          </span>
+        </div>
+      </div>
+
       {/* ── Nav ── */}
       <PhoenixHeader />
 
       {/* ── Main ── */}
       <main
         className="relative z-10 flex flex-1 flex-col items-center px-6"
-        style={{ paddingTop: 48, paddingBottom: 64 }}
+        style={{ paddingTop: 40, paddingBottom: 64 }}
       >
         <div className="w-full" style={{ maxWidth: 480 }}>
 
-          {/* ── Page title ── */}
+          {/* ── Hero ── */}
           {ready && (
-            <div className="animate-fade-up" style={{ marginBottom: 48 }}>
-              <p style={{ color: "#3E3B37", fontSize: 11, marginBottom: 8 }}>
-                Phoenix 的推薦理由
-              </p>
+            <div className="animate-fade-up" style={{ marginBottom: 32 }}>
               <h1
                 style={{
                   color: "#FAFAF9",
-                  fontSize: 30,
-                  fontWeight: 680,
+                  fontSize: 28,
+                  fontWeight: 700,
                   letterSpacing: "-0.03em",
-                  lineHeight: 1.2,
+                  lineHeight: 1.15,
+                  marginBottom: 10,
                 }}
               >
                 Why I chose this.
               </h1>
+              <p
+                style={{
+                  color: "#6B6865",
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  letterSpacing: "-0.01em",
+                }}
+              >
+                Phoenix 今天在 03:00 分析了市場、品牌與小佑的 Creator DNA，最後只留下這一個主題。
+              </p>
             </div>
           )}
 
-          {/* ── Section 1: Topic + Confidence ── */}
+          {/* ── Today's Recommendation ── */}
           {ready && (
-            <div className="animate-fade-up delay-100" style={{ marginBottom: 0 }}>
+            <div className="animate-fade-up delay-100" style={{ marginBottom: 32 }}>
               <SectionLabel>Today&apos;s Recommendation</SectionLabel>
 
               <h2
                 style={{
                   color: "#FAFAF9",
-                  fontSize: 24,
+                  fontSize: 22,
                   fontWeight: 650,
                   letterSpacing: "-0.025em",
                   lineHeight: 1.25,
-                  marginBottom: 20,
+                  marginBottom: 16,
                 }}
               >
-                {DATA.topic}
+                {TOPIC}
               </h2>
 
-              {/* Confidence */}
+              {/* Confidence + main judgment */}
               <div
-                className="flex items-center justify-between"
                 style={{
                   padding: "16px 18px",
                   borderRadius: 14,
-                  background: "rgba(249,115,22,0.05)",
-                  border: "1px solid rgba(249,115,22,0.1)",
+                  background: "rgba(249,115,22,0.04)",
+                  border: "1px solid rgba(249,115,22,0.09)",
                 }}
               >
-                <div>
-                  <p style={{ color: "#52504E", fontSize: 11, marginBottom: 4, letterSpacing: "0.04em" }}>
-                    Confidence
-                  </p>
-                  <div className="flex items-baseline gap-2">
+                <div className="flex items-end justify-between" style={{ marginBottom: 14 }}>
+                  <div>
+                    <p
+                      style={{
+                        color: "#52504E",
+                        fontSize: 10,
+                        fontWeight: 600,
+                        letterSpacing: "0.08em",
+                        textTransform: "uppercase",
+                        marginBottom: 4,
+                      }}
+                    >
+                      Confidence
+                    </p>
                     <span
                       style={{
-                        fontSize: 32,
+                        fontSize: 36,
                         fontWeight: 700,
                         letterSpacing: "-0.04em",
                         lineHeight: 1,
@@ -287,34 +309,102 @@ export default function DecisionPage() {
                         display: "inline-block",
                       }}
                     >
-                      {DATA.confidence}%
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: "#F97316",
-                        opacity: 0.7,
-                        letterSpacing: "0.02em",
-                      }}
-                    >
-                      {DATA.grade}
+                      {CONFIDENCE}%
                     </span>
                   </div>
+                  <p
+                    style={{
+                      color: "#3E3B37",
+                      fontSize: 11,
+                      lineHeight: 1.5,
+                      textAlign: "right",
+                      paddingBottom: 2,
+                    }}
+                  >
+                    A+ · Phoenix 非常有把握
+                  </p>
                 </div>
+                <div
+                  style={{
+                    height: 1,
+                    background: "rgba(249,115,22,0.1)",
+                    marginBottom: 14,
+                  }}
+                />
                 <p
                   style={{
-                    color: "#52504E",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                    maxWidth: 180,
-                    textAlign: "right",
+                    color: "#8C8784",
+                    fontSize: 13,
+                    lineHeight: 1.65,
+                    letterSpacing: "-0.01em",
+                    fontStyle: "italic",
                   }}
                 >
-                  Phoenix 對今天這個決定
+                  我今天沒有選最熱的題目。
                   <br />
-                  非常有把握。
+                  我選的是最適合你品牌長期累積的題目。
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Section 1: Decision Factors ── */}
+          {ready && (
+            <div className="animate-fade-up delay-200">
+              <SectionLabel>Decision Factors</SectionLabel>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 10,
+                }}
+              >
+                {FACTORS.map((f) => (
+                  <div
+                    key={f.label}
+                    style={{
+                      padding: "14px 14px",
+                      borderRadius: 12,
+                      background: "rgba(255,255,255,0.025)",
+                      border: "1px solid rgba(255,255,255,0.06)",
+                    }}
+                  >
+                    <p
+                      style={{
+                        color: "#52504E",
+                        fontSize: 9,
+                        fontWeight: 600,
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        marginBottom: 6,
+                      }}
+                    >
+                      {f.label}
+                    </p>
+                    <p
+                      style={{
+                        color: "#F97316",
+                        fontSize: 24,
+                        fontWeight: 700,
+                        letterSpacing: "-0.04em",
+                        lineHeight: 1,
+                        marginBottom: 6,
+                      }}
+                    >
+                      {f.score}
+                    </p>
+                    <p
+                      style={{
+                        color: "#6B6865",
+                        fontSize: 11,
+                        lineHeight: 1.5,
+                        letterSpacing: "-0.005em",
+                      }}
+                    >
+                      {f.text}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -325,116 +415,296 @@ export default function DecisionPage() {
           {ready && (
             <div className="animate-fade-up delay-200">
               <SectionLabel>Why today?</SectionLabel>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {DATA.whyToday.map((line, i) => {
-                  const isLast = i === DATA.whyToday.length - 1;
-                  return (
-                    <p
-                      key={i}
-                      style={{
-                        color: isLast ? "#FAFAF9" : "#8C8784",
-                        fontSize: isLast ? 15 : 15,
-                        fontWeight: isLast ? 500 : 400,
-                        lineHeight: 1.6,
-                        letterSpacing: "-0.01em",
-                        fontStyle: isLast ? "normal" : "normal",
-                      }}
-                    >
-                      {line}
-                    </p>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {ready && <Divider />}
-
-          {/* ── Section 3: Why not others ── */}
-          {ready && (
-            <div className="animate-fade-up delay-200">
-              <SectionLabel>Why not the others?</SectionLabel>
-              <p
-                style={{
-                  color: "#52504E",
-                  fontSize: 13,
-                  lineHeight: 1.55,
-                  marginBottom: 20,
-                }}
-              >
-                Phoenix 今天分析了三個其他選項，最終選擇放棄它們。
-              </p>
-              {DATA.rejected.map((item) => (
-                <RejectedCard key={item.category} item={item} />
-              ))}
-            </div>
-          )}
-
-          {ready && <Divider />}
-
-          {/* ── Section 4: Expected Result ── */}
-          {ready && (
-            <div className="animate-fade-up delay-300">
-              <SectionLabel>Expected Result</SectionLabel>
-              <p
-                style={{
-                  color: "#52504E",
-                  fontSize: 13,
-                  lineHeight: 1.55,
-                  marginBottom: 20,
-                }}
-              >
-                根據你的歷史數據與當前趨勢，Phoenix 預估這篇的表現。
-              </p>
-
-              <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-                <ExpectedCard
-                  label="Share"
-                  value={DATA.expected.share.value}
-                  detail={DATA.expected.share.detail}
-                />
-                <ExpectedCard
-                  label="Save"
-                  value={DATA.expected.save.value}
-                  detail={DATA.expected.save.detail}
-                />
-              </div>
-              <div
-                style={{
-                  padding: "18px 16px",
-                  borderRadius: 14,
-                  background: "rgba(255,255,255,0.02)",
-                  border: "1px solid rgba(255,255,255,0.05)",
-                }}
-              >
-                <p style={{ color: "#3E3B37", fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 8 }}>
-                  Reach
-                </p>
-                <p style={{ color: "#FAFAF9", fontSize: 20, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 6, lineHeight: 1 }}>
-                  {DATA.expected.reach.value}
-                </p>
-                <p style={{ color: "#52504E", fontSize: 11, lineHeight: 1.5 }}>
-                  {DATA.expected.reach.detail}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {ready && <Divider />}
-
-          {/* ── Section 5: Risk ── */}
-          {ready && (
-            <div className="animate-fade-up delay-300">
-              <SectionLabel>If we don&apos;t publish today</SectionLabel>
               <p
                 style={{
                   color: "#8C8784",
                   fontSize: 15,
-                  lineHeight: 1.7,
+                  lineHeight: 1.72,
                   letterSpacing: "-0.01em",
+                  marginBottom: 22,
+                  whiteSpace: "pre-line",
                 }}
               >
-                {DATA.risk}
+                {WHY_TODAY_BODY}
+              </p>
+              <p
+                style={{
+                  color: "#F97316",
+                  fontSize: 14,
+                  fontStyle: "italic",
+                  opacity: 0.75,
+                  letterSpacing: "-0.01em",
+                  lineHeight: 1.55,
+                  borderLeft: "2px solid rgba(249,115,22,0.28)",
+                  paddingLeft: 14,
+                }}
+              >
+                {WHY_TODAY_HIGHLIGHT}
+              </p>
+            </div>
+          )}
+
+          {ready && <Divider />}
+
+          {/* ── Section 3: Rejected Candidates ── */}
+          {ready && (
+            <div className="animate-fade-up delay-300">
+              <SectionLabel>Rejected candidates</SectionLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {REJECTED.map((item, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      padding: "16px 18px",
+                      borderRadius: 12,
+                      background: "rgba(255,255,255,0.02)",
+                      border: "1px solid rgba(255,255,255,0.05)",
+                    }}
+                  >
+                    <div
+                      className="flex items-start justify-between gap-3"
+                      style={{ marginBottom: 8 }}
+                    >
+                      <p
+                        style={{
+                          color: "#FAFAF9",
+                          fontSize: 14,
+                          fontWeight: 500,
+                          letterSpacing: "-0.01em",
+                          lineHeight: 1.3,
+                          flex: 1,
+                        }}
+                      >
+                        {item.topic}
+                      </p>
+                      <span
+                        style={{
+                          background: "rgba(255,255,255,0.03)",
+                          border: "1px solid rgba(255,255,255,0.06)",
+                          borderRadius: 6,
+                          padding: "2px 7px",
+                          fontSize: 9,
+                          color: "#52504E",
+                          fontWeight: 500,
+                          letterSpacing: "0.03em",
+                          flexShrink: 0,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {item.signal}
+                      </span>
+                    </div>
+                    <p
+                      style={{
+                        color: "#6B6865",
+                        fontSize: 13,
+                        lineHeight: 1.6,
+                        letterSpacing: "-0.005em",
+                      }}
+                    >
+                      {item.reason}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {ready && <Divider />}
+
+          {/* ── Section 4: Decision Matrix ── */}
+          {ready && (
+            <div className="animate-fade-up delay-300">
+              <SectionLabel>Decision Matrix</SectionLabel>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {MATRIX.map((row) => (
+                  <div
+                    key={row.topic}
+                    style={{
+                      padding: "14px 16px",
+                      borderRadius: 12,
+                      background: row.selected
+                        ? "rgba(249,115,22,0.04)"
+                        : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${
+                        row.selected
+                          ? "rgba(249,115,22,0.1)"
+                          : "rgba(255,255,255,0.05)"
+                      }`,
+                    }}
+                  >
+                    <div
+                      className="flex items-center justify-between"
+                      style={{ marginBottom: 12 }}
+                    >
+                      <p
+                        style={{
+                          color: row.selected ? "#FAFAF9" : "#6B6865",
+                          fontSize: 13,
+                          fontWeight: row.selected ? 500 : 400,
+                          letterSpacing: "-0.01em",
+                          lineHeight: 1.3,
+                          flex: 1,
+                          paddingRight: 12,
+                        }}
+                      >
+                        {row.topic}
+                      </p>
+                      <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+                        {row.selected && (
+                          <span
+                            style={{
+                              color: "#F97316",
+                              fontSize: 8,
+                              fontWeight: 700,
+                              letterSpacing: "0.1em",
+                              textTransform: "uppercase",
+                            }}
+                          >
+                            CHOSEN
+                          </span>
+                        )}
+                        <RiskBadge risk={row.risk} />
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, 1fr)",
+                        gap: 12,
+                      }}
+                    >
+                      {(
+                        [
+                          { label: "Market", value: row.market },
+                          { label: "Brand Fit", value: row.brand },
+                          { label: "Share", value: row.share },
+                        ] as const
+                      ).map(({ label, value }) => (
+                        <div key={label}>
+                          <div className="flex items-center justify-between">
+                            <span
+                              style={{
+                                color: "#3E3B37",
+                                fontSize: 9,
+                                fontWeight: 600,
+                                letterSpacing: "0.08em",
+                                textTransform: "uppercase",
+                              }}
+                            >
+                              {label}
+                            </span>
+                            <span
+                              style={{
+                                color: row.selected ? "#F97316" : "#52504E",
+                                fontSize: 11,
+                                fontWeight: 600,
+                              }}
+                            >
+                              {value}
+                            </span>
+                          </div>
+                          <ScoreBar value={value} active={row.selected} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {ready && <Divider />}
+
+          {/* ── Section 5: Phoenix Recommendation ── */}
+          {ready && (
+            <div className="animate-fade-up delay-400">
+              <SectionLabel>Phoenix recommendation</SectionLabel>
+              <p
+                style={{
+                  color: "#FAFAF9",
+                  fontSize: 15,
+                  fontWeight: 500,
+                  lineHeight: 1.6,
+                  letterSpacing: "-0.01em",
+                  marginBottom: 14,
+                }}
+              >
+                我建議今天發布這篇。
+              </p>
+              <p
+                style={{
+                  color: "#8C8784",
+                  fontSize: 14,
+                  lineHeight: 1.72,
+                  letterSpacing: "-0.01em",
+                  marginBottom: 14,
+                }}
+              >
+                不是因為它最容易寫。
+                <br />
+                不是因為它看起來最熱門。
+              </p>
+              <p
+                style={{
+                  color: "#8C8784",
+                  fontSize: 14,
+                  lineHeight: 1.72,
+                  letterSpacing: "-0.01em",
+                  marginBottom: 18,
+                }}
+              >
+                而是因為它最能同時滿足三件事：
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {RECOMMENDATION_REASONS.map((item, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <span
+                      style={{
+                        color: "#F97316",
+                        fontSize: 10,
+                        fontWeight: 700,
+                        opacity: 0.55,
+                        letterSpacing: "0.04em",
+                        marginTop: 1,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <p
+                      style={{
+                        color: "#A09D9A",
+                        fontSize: 14,
+                        lineHeight: 1.6,
+                        letterSpacing: "-0.005em",
+                      }}
+                    >
+                      {item}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {ready && <Divider />}
+
+          {/* ── Section 6: Risk ── */}
+          {ready && (
+            <div className="animate-fade-up delay-400">
+              <SectionLabel>Risk if we skip today</SectionLabel>
+              <p
+                style={{
+                  color: "#8C8784",
+                  fontSize: 15,
+                  lineHeight: 1.72,
+                  letterSpacing: "-0.01em",
+                  whiteSpace: "pre-line",
+                }}
+              >
+                {RISK_TEXT}
               </p>
             </div>
           )}
@@ -443,42 +713,30 @@ export default function DecisionPage() {
 
           {/* ── Bottom Actions ── */}
           {ready && (
-            <div className="animate-fade-up delay-400">
-              {approved ? (
+            <div className="animate-fade-up delay-500">
+              {actionTaken ? (
                 <div
                   className="flex items-center justify-center gap-2"
                   style={{ height: 80 }}
                 >
-                  {approved === "reject" ? (
-                    <p style={{ color: "#52504E", fontSize: 14 }}>已記錄。Phoenix 會繼續分析。</p>
-                  ) : (
-                    <>
-                      <div
-                        className="h-2 w-2 rounded-full"
-                        style={{ background: "#22c55e", boxShadow: "0 0 4px #22c55e" }}
-                      />
-                      <p style={{ color: "#4ade80", fontSize: 14 }}>
-                        {approved === "force" ? "強制發布中..." : "已核准，跳轉到輪播..."}
-                      </p>
-                    </>
-                  )}
+                  <div
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: "#22c55e",
+                      boxShadow: "0 0 4px #22c55e",
+                    }}
+                  />
+                  <p style={{ color: "#4ade80", fontSize: 14 }}>
+                    {actionTaken === "carousel" ? "跳轉到輪播..." : "強制發布中..."}
+                  </p>
                 </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <p
-                    style={{
-                      color: "#3E3B37",
-                      fontSize: 11,
-                      textAlign: "center",
-                      marginBottom: 4,
-                    }}
-                  >
-                    你的決定
-                  </p>
-
-                  {/* Approve */}
+                  {/* View Carousel — primary */}
                   <button
-                    onClick={() => handleAction("approve")}
+                    onClick={handleViewCarousel}
                     style={{
                       width: "100%",
                       height: 50,
@@ -491,13 +749,13 @@ export default function DecisionPage() {
                       border: "none",
                     }}
                   >
-                    Approve — View Carousel
+                    View Carousel
                   </button>
 
-                  {/* Reject + Force row */}
+                  {/* Reject + Force Publish */}
                   <div style={{ display: "flex", gap: 8 }}>
                     <button
-                      onClick={() => handleAction("reject")}
+                      onClick={handleReject}
                       style={{
                         flex: 1,
                         height: 44,
@@ -506,22 +764,22 @@ export default function DecisionPage() {
                         color: "#52504E",
                         fontSize: 13,
                         fontWeight: 400,
-                        border: "1px solid rgba(255,255,255,0.06)",
+                        border: "1px solid rgba(255,255,255,0.07)",
                       }}
                     >
                       Reject
                     </button>
                     <button
-                      onClick={() => handleAction("force")}
+                      onClick={handleForcePublish}
                       style={{
                         flex: 1,
                         height: 44,
                         borderRadius: 12,
-                        background: "rgba(74,222,128,0.05)",
-                        color: "#4ade80",
+                        background: "rgba(249,115,22,0.07)",
+                        color: "#FB923C",
                         fontSize: 13,
                         fontWeight: 500,
-                        border: "1px solid rgba(74,222,128,0.1)",
+                        border: "1px solid rgba(249,115,22,0.12)",
                       }}
                     >
                       Force Publish
@@ -531,6 +789,7 @@ export default function DecisionPage() {
               )}
             </div>
           )}
+
         </div>
       </main>
     </div>
