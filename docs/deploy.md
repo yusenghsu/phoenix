@@ -52,4 +52,4 @@ All pages render as static output — fast, no server required.
 
 ## Demo URL
 
-To be added after deployment.
+https://phoenix-five-beta.vercel.app
