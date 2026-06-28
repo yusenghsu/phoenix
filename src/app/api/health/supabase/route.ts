@@ -40,7 +40,7 @@ export async function GET() {
       return NextResponse.json(FAIL, { status: 200 });
     }
 
-    const today = new Date().toISOString().split("T")[0];
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
     const { data, error } = await client
       .from("daily_decisions")
       .select("selected_topic")

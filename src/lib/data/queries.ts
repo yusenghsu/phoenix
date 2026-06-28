@@ -1,5 +1,6 @@
 import "server-only";
 import { createServerClient } from "../supabase/server";
+import { taipeiDate } from "./taipei-date";
 import {
   MOCK_TODAY_DECISION,
   MOCK_CANDIDATES,
@@ -78,11 +79,7 @@ function toCarousel(row: Record<string, unknown>): Omit<CarouselDraft, "slides">
 }
 
 function todayDate() {
-  // Always use Taiwan date (Asia/Taipei = UTC+8).
-  // Cron fires at 19:00 UTC = 03:00 Taiwan next day — UTC date would be
-  // one day behind Taiwan, causing "today" lookups to miss the new draft
-  // from 08:00 Taiwan until the next cron cycle.
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+  return taipeiDate();
 }
 
 // ─── Query functions ───────────────────────────────────────────────────────────

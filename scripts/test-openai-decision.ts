@@ -1,7 +1,7 @@
 import { runDecisionEngine } from "../src/lib/decision/provider";
 
 const provider = process.env.DECISION_ENGINE_PROVIDER || "mock";
-const today = new Date().toISOString().split("T")[0];
+const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
 
 const mockInput = {
   user: { id: "a0000000-0000-0000-0000-000000000001", name: "小佑" },

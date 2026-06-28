@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
   const now = new Date().toISOString();
 
   // Check if today already has a decision

@@ -1,5 +1,6 @@
 import "server-only";
 import { createServerClient } from "../supabase/server";
+import { taipeiDate } from "./taipei-date";
 
 type Client = NonNullable<ReturnType<typeof createServerClient>>;
 
@@ -12,8 +13,7 @@ const MOCK_FALLBACK = {
 const MOCK_USER_ID = "a0000000-0000-0000-0000-000000000001";
 
 async function getTodayDecisionId(client: Client): Promise<string | null> {
-  // Use Taiwan date — must match the date stored by the cron (daily-decision.ts).
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+  const today = taipeiDate();
   const { data } = await client
     .from("daily_decisions")
     .select("id")

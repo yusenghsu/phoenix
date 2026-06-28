@@ -63,6 +63,45 @@ Display in `formatScheduledAt` uses Taiwan timezone via `Intl.DateTimeFormat`:
 
 ---
 
+## Day-2 Lifecycle
+
+### How today's `scheduled` decision does NOT block tomorrow's cron
+
+Each cron run looks for a decision with `decision_date = <tomorrow Taiwan date>`.
+Today's decision has `decision_date = <today Taiwan date>`. Different key → no collision.
+
+```
+Today   : decision_date = "2026-06-28", status = "scheduled"
+Tomorrow cron (19:00 UTC Jun 28 = 03:00 Taiwan Jun 29):
+  today (Taiwan) = "2026-06-29"
+  query: decision_date = "2026-06-29" → NOT FOUND
+  result: creates new draft for "2026-06-29" ✅
+```
+
+### Day-2 decision lifecycle
+
+| Time (Taiwan) | Event |
+|---|---|
+| Jun 28 03:00 | Cron creates draft for `decision_date = "2026-06-28"` |
+| Jun 28 (daytime) | Creator reviews, approves → status = `scheduled` |
+| Jun 29 03:00 | Cron creates draft for `decision_date = "2026-06-29"` (new draft, not blocked) |
+| Jun 29 (daytime) | Creator reviews new draft |
+
+### Local simulation
+
+Run this read-only check anytime to verify Day-2 is safe:
+
+```bash
+npm run simulate:next-day
+```
+
+Output shows:
+- Today's `decision_date` and status
+- Whether tomorrow's date already has a decision
+- Whether tomorrow's cron would create or skip
+
+---
+
 ## Rules
 
 - Cron creates draft only (`status = draft`)

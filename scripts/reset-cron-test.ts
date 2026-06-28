@@ -12,7 +12,7 @@ if (!url || !key) {
 }
 
 const client = createClient(url, key);
-const today = new Date().toISOString().split("T")[0];
+const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
 
 (async () => {
   console.log(`reset:cron-test — clearing today's decision data (${today})...`);

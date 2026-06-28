@@ -44,7 +44,7 @@ function todayAt20(): string {
 }
 
 function todayISO(): string {
-  return new Date().toISOString().split("T")[0];
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
 }
 
 // ─── Main reset function ───────────────────────────────────────────────────────

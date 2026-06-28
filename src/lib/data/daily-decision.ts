@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runDecisionEngine } from "@/lib/decision";
+import { taipeiDate } from "./taipei-date";
 
 export type DailyDecisionResult = {
   ok: boolean;
@@ -21,9 +22,7 @@ function capitalize(s: string): string {
 export async function runDailyDecision(
   client: SupabaseClient
 ): Promise<DailyDecisionResult> {
-  // Use Taiwan date so decision_date matches what the user sees in their timezone.
-  // Cron fires at 19:00 UTC = 03:00 Taiwan next day — UTC date would be off by one.
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+  const today = taipeiDate();
   const now = new Date().toISOString();
 
   // 1. Load user
