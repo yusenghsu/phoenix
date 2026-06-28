@@ -6,7 +6,7 @@ import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-const TOPIC = "退休不是 65 歲開始";
+const TOPIC = "Phoenix 正在載入今日決策...";
 const CONFIDENCE = 92;
 
 const FACTORS = [
@@ -32,8 +32,6 @@ const FACTORS = [
   },
 ];
 
-const WHY_TODAY_BODY = `退休不是一個突然爆紅的題目。\n\n它正在慢慢升溫，而且你的品牌最近七天沒有延續這條線。\n\n如果今天接上，Phoenix 判斷這篇不只是單篇內容，而是可以重新啟動一個系列。`;
-const WHY_TODAY_HIGHLIGHT = "今天不是追流量，而是延續品牌記憶。";
 
 const REJECTED = [
   {
@@ -64,13 +62,13 @@ const MATRIX: {
   risk: RiskLevel;
   selected: boolean;
 }[] = [
-  { topic: "退休不是 65 歲開始", market: 84, brand: 96, share: 89, risk: "Low", selected: true },
+  { topic: "Phoenix 今日選題", market: 84, brand: 96, share: 89, risk: "Low", selected: true },
   { topic: "AI 會淘汰保險業務嗎？", market: 93, brand: 64, share: 76, risk: "High", selected: false },
   { topic: "努力沒有結果怎麼辦？", market: 68, brand: 58, share: 61, risk: "Medium", selected: false },
   { topic: "快速成交的三個技巧", market: 59, brand: 42, share: 49, risk: "High", selected: false },
 ];
 
-const RISK_TEXT = `如果今天不發，退休系列的品牌記憶會中斷。\n\n這個題目不是短期爆點，而是長期信任累積的入口。\n\nPhoenix 判斷今天是適合接上的時間點。`;
+const RISK_TEXT = "Phoenix 建議今天執行這個主題。跳過可能會中斷品牌的內容節奏，需要額外篇幅才能重新建立觀眾印象。";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -352,7 +350,9 @@ export default function DecisionPage() {
                       paddingBottom: 2,
                     }}
                   >
-                    A+ · Phoenix 非常有把握
+                    {displayConfidence >= 90 ? "A+ · Phoenix 非常有把握" :
+                     displayConfidence >= 80 ? "A · 信心高" :
+                     displayConfidence >= 70 ? "B · 信心中等" : "C · 謹慎判斷"}
                   </p>
                 </div>
                 <div
@@ -452,25 +452,10 @@ export default function DecisionPage() {
                   fontSize: 15,
                   lineHeight: 1.72,
                   letterSpacing: "-0.01em",
-                  marginBottom: 22,
                   whiteSpace: "pre-line",
                 }}
               >
-                {WHY_TODAY_BODY}
-              </p>
-              <p
-                style={{
-                  color: "#F97316",
-                  fontSize: 14,
-                  fontStyle: "italic",
-                  opacity: 0.75,
-                  letterSpacing: "-0.01em",
-                  lineHeight: 1.55,
-                  borderLeft: "2px solid rgba(249,115,22,0.28)",
-                  paddingLeft: 14,
-                }}
-              >
-                {WHY_TODAY_HIGHLIGHT}
+                {dbDecision?.mainJudgment ?? "Phoenix 分析了今日的市場信號、品牌節奏與 Creator DNA，判斷這是目前最適合的發布主題。"}
               </p>
             </div>
           )}

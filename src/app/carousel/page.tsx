@@ -26,78 +26,72 @@ const SLIDES: Slide[] = [
     id: 1,
     bg: "linear-gradient(150deg, #1C1208 0%, #0E0B07 55%, #0C0A08 100%)",
     variant: "cover",
-    lines: ["退休不是", "65 歲開始"],
-    copy: "退休不是 65 歲開始",
+    lines: ["Phoenix", "今日輪播"],
+    copy: "Phoenix 今日輪播",
   },
   {
     id: 2,
     bg: "linear-gradient(150deg, #0A0B10 0%, #0C0A08 100%)",
     variant: "two-thought",
-    lines: ["很多人以為退休是年紀問題。", "其實退休是選擇問題。"],
-    copy: "很多人以為退休是年紀問題。\n其實退休是選擇問題。",
+    lines: ["Phoenix 正在載入", "今日輪播內容..."],
+    copy: "Phoenix 正在載入今日輪播內容...",
   },
   {
     id: 3,
     bg: "linear-gradient(135deg, #0C0A08 0%, #130E04 100%)",
     variant: "statement",
-    lines: ["你今天怎麼花錢，", "其實已經在決定", "20 年後的自由。"],
-    highlight: "20 年後的自由。",
-    copy: "你今天怎麼花錢，\n其實已經在決定 20 年後的自由。",
+    lines: ["Slide 3"],
+    copy: "Slide 3",
   },
   {
     id: 4,
     bg: "linear-gradient(180deg, #150A0A 0%, #0C0A08 100%)",
     variant: "dramatic",
-    lines: ["真正可怕的不是沒退休金。", "是你一直以為還很早。"],
-    copy: "真正可怕的不是沒退休金。\n是你一直以為還很早。",
+    lines: ["Slide 4"],
+    copy: "Slide 4",
   },
   {
     id: 5,
     bg: "linear-gradient(145deg, #090C12 0%, #0C0A08 100%)",
     variant: "minimal",
-    lines: ["保險不是答案。", "規劃才是。"],
-    copy: "保險不是答案。\n規劃才是。",
+    lines: ["Slide 5"],
+    copy: "Slide 5",
   },
   {
     id: 6,
     bg: "linear-gradient(135deg, #0C0A08 0%, #0B0C12 100%)",
     variant: "quote",
-    lines: ["如果你不知道自己想過什麼生活，", "再多工具都只是工具。"],
-    copy: "如果你不知道自己想過什麼生活，\n再多工具都只是工具。",
+    lines: ["Slide 6"],
+    copy: "Slide 6",
   },
   {
     id: 7,
     bg: "linear-gradient(150deg, #140D0A 0%, #0C0A08 100%)",
     variant: "two-thought",
-    lines: ["退休不是離開工作。", "是擁有選擇。"],
-    copy: "退休不是離開工作。\n是擁有選擇。",
+    lines: ["Slide 7"],
+    copy: "Slide 7",
   },
   {
     id: 8,
     bg: "linear-gradient(150deg, #0C0A08 0%, #1C1208 100%)",
     variant: "closing",
-    lines: ["你不是在準備退休。", "你是在準備", "未來的自由。"],
-    highlight: "未來的自由。",
-    copy: "你不是在準備退休。\n你是在準備未來的自由。",
+    lines: ["Slide 8"],
+    copy: "Slide 8",
   },
 ];
 
-const CAPTION_BRIEF = "同一個觀念，越早想清楚，越不容易被生活推著走。";
+const CAPTION_BRIEF = "Phoenix 正在載入今日 Caption...";
 
-const CAPTION_FULL = `同一個觀念，越早想清楚，越不容易被生活推著走。
+const CAPTION_FULL = "Phoenix 正在載入今日 Caption...";
 
-很多人都以為退休是 65 歲以後才要想的事。但其實，你現在做的每一個選擇，都在決定未來的自由。
-
-如果你覺得退休還很遠，這篇貼文就是為你寫的。`;
-
-const HASHTAGS = ["#退休規劃", "#人生選擇", "#保險觀念", "#財務自由", "#小佑"];
+const HASHTAGS = ["#Phoenix"];
 
 const CHECKLIST = [
   "8 slides ready",
   "Caption ready",
   "Brand voice matched",
   "Design DNA matched",
-  "Decision approved",
+  "Decision ready",
 ];
 
 // ─── DB Slide renderer ────────────────────────────────────────────────────────

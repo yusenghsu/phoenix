@@ -6,26 +6,11 @@ import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
-const DECISIONS = [
-  {
-    topic: "退休不是 65 歲開始",
-    score: 92,
-    grade: "A+",
-    personality: "我沒有選最熱門的題目。\n我選的是最適合你品牌長期累積的題目。",
-  },
-  {
-    topic: "增員不是招募，是選人",
-    score: 87,
-    grade: "A",
-    personality: "今天我沒有追熱門，而是選擇品牌長期價值。",
-  },
-];
-
 const BRIEF = [
   {
     label: "Decision",
     status: "03:00",
-    desc: "Phoenix 從 4 個候選題目中，選出今天唯一推薦主題。",
+    desc: "Phoenix 從候選題目中，選出今天唯一推薦主題。",
   },
   {
     label: "Carousel",
@@ -35,12 +20,9 @@ const BRIEF = [
   {
     label: "Timing",
     status: "20:00",
-    desc: "今天適合在晚間發布，延續退休系列的品牌記憶。",
+    desc: "Phoenix 判斷今晚是適合發布的時間點。",
   },
 ];
-
-const WHY_TODAY =
-  "退休話題正在升溫，但還沒有過度擁擠。你的品牌最近七天沒有延續這條線，今天適合接上。";
 
 const READINESS = [
   "Decision approved",
@@ -120,11 +102,10 @@ function Check() {
 
 export default function Home() {
   const router = useRouter();
-  const [idx, setIdx] = useState(0);
-  const [analyzing, setAnalyzing] = useState(false);
   const [ready, setReady] = useState(false);
   const [scoreVisible, setScoreVisible] = useState(false);
   const [dbHome, setDbHome] = useState<{ topic: string; score: number; grade: string; mainJudgment: string; whyToday: string; status?: string } | null>(null);
+
   useEffect(() => {
     setReady(true);
     const t = setTimeout(() => setScoreVisible(true), 600);
@@ -135,28 +116,13 @@ export default function Home() {
     return () => clearTimeout(t);
   }, []);
 
-  useEffect(() => {
-    setScoreVisible(false);
-    const t = setTimeout(() => setScoreVisible(true), 250);
-    return () => clearTimeout(t);
-  }, [idx]);
-
-  const _base = DECISIONS[idx];
   const decision = {
-    topic: dbHome && idx === 0 ? dbHome.topic : _base.topic,
-    score: dbHome && idx === 0 ? dbHome.score : _base.score,
-    grade: dbHome && idx === 0 ? dbHome.grade : _base.grade,
-    personality: dbHome && idx === 0 ? dbHome.mainJudgment : _base.personality,
+    topic: dbHome?.topic ?? "Phoenix 正在載入今日決策...",
+    score: dbHome?.score ?? 0,
+    grade: dbHome?.grade ?? "—",
+    personality: dbHome?.mainJudgment ?? "我今天沒有選最熱的題目。\n我選的是最適合你品牌長期累積的題目。",
   };
-  const whyToday = dbHome && idx === 0 ? dbHome.whyToday : WHY_TODAY;
-
-  function handleReanalyze() {
-    setAnalyzing(true);
-    setTimeout(() => {
-      setIdx((i) => (i + 1) % DECISIONS.length);
-      setAnalyzing(false);
-    }, 2200);
-  }
+  const whyToday = dbHome?.whyToday ?? "Phoenix 正在載入今日分析結果...";
 
   return (
     <div className="relative flex min-h-screen flex-col" style={{ background: "#0C0A08" }}>
@@ -202,21 +168,7 @@ export default function Home() {
           {ready && (
             <div className="animate-fade-up delay-200 relative">
 
-              {/* Analyzing overlay */}
-              {analyzing && (
-                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" style={{ pointerEvents: "none" }}>
-                  <div className="flex gap-[5px]">
-                    {[0, 1, 2].map((i) => (
-                      <span key={i} className="inline-block rounded-full"
-                        style={{ width: 4, height: 4, background: "#F97316", animation: `blink 1.3s ease-in-out ${i * 0.22}s infinite` }}
-                      />
-                    ))}
-                  </div>
-                  <span style={{ color: "#52504E", fontSize: 11, letterSpacing: "0.05em" }}>Phoenix is thinking</span>
-                </div>
-              )}
-
-              <div style={{ opacity: analyzing ? 0.05 : 1, transition: "opacity 0.45s ease" }}>
+              <div>
 
                 {/* Section separator */}
                 <div className="flex items-center gap-3" style={{ marginBottom: 12 }}>
@@ -293,29 +245,31 @@ export default function Home() {
                   </button>
                 </div>
 
-                {/* ── Schedule ready / Waiting for review ── */}
-                <div style={{ marginBottom: 10 }}>
-                  <p style={{ color: "#3E3B37", fontSize: 8, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6 }}>
-                    {dbHome?.status === "draft" ? "Waiting for review" : "Schedule ready"}
-                  </p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8, rowGap: 4 }}>
-                    {(dbHome?.status === "draft" ? DRAFT_READINESS : READINESS).map((item, i) => (
-                      <div
-                        key={item}
-                        className="animate-fade-up"
-                        style={{
-                          display: "flex", alignItems: "center", gap: 5,
-                          animationDelay: `${300 + i * 80}ms`,
-                        }}
-                      >
-                        <Check />
-                        <span style={{ color: "#6B6865", fontSize: 11, letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {item}
-                        </span>
-                      </div>
-                    ))}
+                {/* ── Status checklist — only show after DB loads ── */}
+                {dbHome && (
+                  <div style={{ marginBottom: 10 }}>
+                    <p style={{ color: "#3E3B37", fontSize: 8, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6 }}>
+                      {dbHome.status === "draft" ? "Waiting for review" : "Schedule ready"}
+                    </p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8, rowGap: 4 }}>
+                      {(dbHome.status === "draft" ? DRAFT_READINESS : READINESS).map((item, i) => (
+                        <div
+                          key={item}
+                          className="animate-fade-up"
+                          style={{
+                            display: "flex", alignItems: "center", gap: 5,
+                            animationDelay: `${300 + i * 80}ms`,
+                          }}
+                        >
+                          <Check />
+                          <span style={{ color: "#6B6865", fontSize: 11, letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {item}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* ── Main actions ── */}
                 {dbHome?.status === "draft" ? (
@@ -381,7 +335,7 @@ export default function Home() {
 
           {/* ── Below fold ── */}
 
-          {ready && (
+          {ready && dbHome && (
             <p
               className="animate-fade-up delay-400"
               style={{ color: "#F97316", fontSize: 12, opacity: 0.4, fontStyle: "italic", letterSpacing: "-0.005em", marginTop: 18, whiteSpace: "pre-line" }}
@@ -391,23 +345,9 @@ export default function Home() {
           )}
 
           {ready && (
-            <div style={{ height: 1, background: "rgba(255,255,255,0.05)", margin: "20px 0" }} />
-          )}
-
-          {ready && (
-            <button
-              onClick={handleReanalyze}
-              disabled={analyzing}
-              style={{ width: "100%", height: 36, borderRadius: 10, background: "transparent", color: "#3E3B37", fontSize: 12, fontWeight: 400, border: "none", opacity: analyzing ? 0.3 : 1, transition: "opacity 0.2s" }}
-            >
-              Re-analyze
-            </button>
-          )}
-
-          {ready && (
             <p
               className="animate-fade-up delay-500"
-              style={{ color: "#252220", fontSize: 11, textAlign: "center", marginTop: 14 }}
+              style={{ color: "#252220", fontSize: 11, textAlign: "center", marginTop: 18 }}
             >
               Analyzes daily at 03:00 · Updates every morning
             </p>
