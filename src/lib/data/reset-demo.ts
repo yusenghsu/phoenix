@@ -38,9 +38,9 @@ function daysAgo(n: number): string {
 }
 
 function todayAt20(): string {
-  const d = new Date();
-  d.setHours(20, 0, 0, 0);
-  return d.toISOString();
+  // 20:00 Taiwan (Asia/Taipei = UTC+8) = 12:00 UTC
+  const taipeiDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+  return new Date(`${taipeiDate}T12:00:00.000Z`).toISOString();
 }
 
 function todayISO(): string {

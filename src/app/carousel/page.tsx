@@ -492,25 +492,40 @@ export default function CarouselPage() {
           {/* ── Primary actions ── */}
           {ready && (
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <button
-                onClick={handleApprove}
-                disabled={approving}
-                style={{
-                  width: "100%", height: 48,
-                  borderRadius: 14,
-                  background: "#FAFAF9",
-                  color: "#0C0A08",
-                  fontSize: 14, fontWeight: 600,
-                  letterSpacing: "-0.01em",
-                  border: "none",
-                  opacity: approving ? 0.6 : 1,
-                  transition: "opacity 0.2s",
-                }}
-              >
-                {approving
-                  ? "Scheduling..."
-                  : (dbCarousel?.decisionStatus === "draft" ? "Approve Draft" : "Approve & Schedule")}
-              </button>
+              {dbCarousel?.decisionStatus === "scheduled" ? (
+                <button
+                  onClick={() => router.push("/publish")}
+                  style={{
+                    width: "100%", height: 48,
+                    borderRadius: 14,
+                    background: "rgba(249,115,22,0.06)",
+                    color: "#FB923C",
+                    fontSize: 14, fontWeight: 600,
+                    letterSpacing: "-0.01em",
+                    border: "1px solid rgba(249,115,22,0.10)",
+                  }}
+                >
+                  View Schedule
+                </button>
+              ) : dbCarousel !== null ? (
+                <button
+                  onClick={handleApprove}
+                  disabled={approving}
+                  style={{
+                    width: "100%", height: 48,
+                    borderRadius: 14,
+                    background: "#FAFAF9",
+                    color: "#0C0A08",
+                    fontSize: 14, fontWeight: 600,
+                    letterSpacing: "-0.01em",
+                    border: "none",
+                    opacity: approving ? 0.6 : 1,
+                    transition: "opacity 0.2s",
+                  }}
+                >
+                  {approving ? "Scheduling..." : "Approve Draft"}
+                </button>
+              ) : null}
 
               <button
                 onClick={() => router.push("/decision")}

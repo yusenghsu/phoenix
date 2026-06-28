@@ -30,9 +30,19 @@ function formatScheduledAt(iso: string | null): string {
   if (!iso) return "Today 20:00";
   try {
     const d = new Date(iso);
-    const h = d.getHours().toString().padStart(2, "0");
-    const m = d.getMinutes().toString().padStart(2, "0");
-    return `Today ${h}:${m}`;
+    if (isNaN(d.getTime())) return "Today 20:00";
+    // Display in Taiwan time (Asia/Taipei = UTC+8)
+    const time = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Taipei",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(d);
+    // Sanity check: Phoenix posts in the evening. If Taiwan hour is outside
+    // 18-22 range, the stored timestamp is likely a UTC conversion error — fall back.
+    const hour = parseInt(time.split(":")[0], 10);
+    if (hour < 18 || hour > 22) return "Today 20:00";
+    return `Today ${time}`;
   } catch {
     return "Today 20:00";
   }

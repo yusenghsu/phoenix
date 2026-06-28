@@ -48,8 +48,9 @@ async function upsertPublishJob(
   carouselDraftId: string,
   forcePublish: boolean
 ): Promise<boolean> {
-  const scheduledAt = new Date();
-  scheduledAt.setHours(20, 0, 0, 0);
+  // Store 20:00 Taiwan time (Asia/Taipei = UTC+8, so UTC 12:00)
+  const taipeiDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+  const scheduledAt = new Date(`${taipeiDate}T12:00:00.000Z`);
   const now = new Date().toISOString();
 
   const { data: existing } = await client

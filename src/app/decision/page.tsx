@@ -182,15 +182,6 @@ export default function DecisionPage() {
     setTimeout(() => router.push("/carousel"), 800);
   }
 
-  async function handleForcePublish() {
-    setActionTaken("publish");
-    await Promise.all([
-      fetch("/api/actions/force-publish", { method: "POST" }).catch(() => {}),
-      new Promise((resolve) => setTimeout(resolve, 800)),
-    ]);
-    router.push("/publish");
-  }
-
   async function handleApproveDraft() {
     setActionTaken("publish");
     await Promise.all([
@@ -671,7 +662,7 @@ export default function DecisionPage() {
                     }}
                   />
                   <p style={{ color: "#4ade80", fontSize: 14 }}>
-                    {actionTaken === "carousel" ? "跳轉到輪播..." : "強制發布中..."}
+                    {actionTaken === "carousel" ? "跳轉到輪播..." : "排程中..."}
                   </p>
                 </div>
               ) : (
@@ -694,24 +685,24 @@ export default function DecisionPage() {
                     View Carousel
                   </button>
 
-                  {/* Reject + Approve Draft (draft) or Force Publish (non-draft) */}
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      onClick={handleReject}
-                      style={{
-                        flex: 1,
-                        height: 44,
-                        borderRadius: 12,
-                        background: "transparent",
-                        color: "#52504E",
-                        fontSize: 13,
-                        fontWeight: 400,
-                        border: "1px solid rgba(255,255,255,0.07)",
-                      }}
-                    >
-                      Reject
-                    </button>
-                    {dbDecision?.status === "draft" ? (
+                  {/* Reject + Approve Draft (draft only) — hidden when scheduled */}
+                  {dbDecision?.status === "draft" ? (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        onClick={handleReject}
+                        style={{
+                          flex: 1,
+                          height: 44,
+                          borderRadius: 12,
+                          background: "transparent",
+                          color: "#52504E",
+                          fontSize: 13,
+                          fontWeight: 400,
+                          border: "1px solid rgba(255,255,255,0.07)",
+                        }}
+                      >
+                        Reject
+                      </button>
                       <button
                         onClick={handleApproveDraft}
                         style={{
@@ -727,24 +718,24 @@ export default function DecisionPage() {
                       >
                         Approve Draft
                       </button>
-                    ) : (
-                      <button
-                        onClick={handleForcePublish}
-                        style={{
-                          flex: 1,
-                          height: 44,
-                          borderRadius: 12,
-                          background: "rgba(249,115,22,0.07)",
-                          color: "#FB923C",
-                          fontSize: 13,
-                          fontWeight: 500,
-                          border: "1px solid rgba(249,115,22,0.12)",
-                        }}
-                      >
-                        Force Schedule
-                      </button>
-                    )}
-                  </div>
+                    </div>
+                  ) : dbDecision?.status === "scheduled" ? (
+                    <button
+                      onClick={() => router.push("/publish")}
+                      style={{
+                        width: "100%",
+                        height: 44,
+                        borderRadius: 12,
+                        background: "rgba(249,115,22,0.06)",
+                        color: "#FB923C",
+                        fontSize: 13,
+                        fontWeight: 500,
+                        border: "1px solid rgba(249,115,22,0.10)",
+                      }}
+                    >
+                      View Schedule
+                    </button>
+                  ) : null}
                 </div>
               )}
             </div>
