@@ -50,6 +50,7 @@ Routes protected by `INTERNAL_DEBUG_SECRET` allow bypass in non-production:
 | `/api/debug/data-source` | GET | `x-internal-debug-secret` | Dev bypass allowed |
 | `/api/debug/openai-decision-dry-run` | POST | `x-openai-dry-run-secret` | No writes |
 | `/api/debug/save-openai-decision-draft` | POST | `x-openai-save-secret` | Writes draft only |
+| `/api/debug/topic-intelligence` | POST | `x-internal-debug-secret` | No writes — returns 5 topic candidates |
 | `/api/admin/reset-demo` | POST | `x-demo-reset-secret` | Destructive — local/staging only |
 
 ---
@@ -60,6 +61,7 @@ Routes protected by `INTERNAL_DEBUG_SECRET` allow bypass in non-production:
 |---|---|---|
 | `/debug/status` | View today's decision status via secret | No |
 | `/debug/openai-review` | Run OpenAI dry run and save draft | No |
+| `/debug/topic-intelligence` | Generate 5 topic candidates from brand DNA | No |
 
 ---
 
