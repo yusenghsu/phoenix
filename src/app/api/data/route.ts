@@ -17,6 +17,15 @@ function scoreGrade(score: number): string {
   return "D";
 }
 
+// Normalize risk_level to English regardless of what the AI returned (may be Chinese)
+function normalizeRisk(raw: string): "Low" | "Medium" | "High" {
+  const v = (raw ?? "").toLowerCase().trim();
+  if (v === "low" || v === "低") return "Low";
+  if (v === "medium" || v === "中") return "Medium";
+  if (v === "high" || v === "高") return "High";
+  return "Low"; // safe fallback
+}
+
 function formatScheduledAt(iso: string | null): string {
   if (!iso) return "Today 20:00";
   try {
@@ -70,7 +79,7 @@ export async function GET(request: NextRequest) {
         market: c.marketScore,
         brand: c.brandFitScore,
         share: c.shareScore,
-        risk: c.riskLevel as string,
+        risk: normalizeRisk(c.riskLevel as string),
         selected: c.selected,
       }));
 

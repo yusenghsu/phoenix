@@ -121,13 +121,13 @@ function ScoreBar({ value, active }: { value: number; active: boolean }) {
   );
 }
 
-function RiskBadge({ risk }: { risk: RiskLevel }) {
-  const map = {
+function RiskBadge({ risk }: { risk: string }) {
+  const map: Record<string, { color: string; bg: string; border: string }> = {
     Low: { color: "rgba(74,222,128,0.8)", bg: "rgba(34,197,94,0.06)", border: "rgba(34,197,94,0.13)" },
     Medium: { color: "#FB923C", bg: "rgba(249,115,22,0.07)", border: "rgba(249,115,22,0.14)" },
     High: { color: "#6B6865", bg: "rgba(255,255,255,0.03)", border: "rgba(255,255,255,0.07)" },
   };
-  const s = map[risk];
+  const s = map[risk] ?? { color: "#6B6865", bg: "rgba(255,255,255,0.03)", border: "rgba(255,255,255,0.07)" };
   return (
     <span
       style={{
@@ -206,7 +206,7 @@ export default function DecisionPage() {
   const displayConfidence = dbDecision?.confidence ?? CONFIDENCE;
   const displayFactors = dbDecision?.factors ?? FACTORS;
   const displayRejected = dbDecision?.rejected ?? REJECTED;
-  const displayMatrix = (dbDecision?.matrix ?? MATRIX) as typeof MATRIX;
+  const displayMatrix = dbDecision?.matrix ?? MATRIX;
   const displayRisk = dbDecision?.risk ?? RISK_TEXT;
 
   return (
