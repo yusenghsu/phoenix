@@ -1,13 +1,20 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
+import { checkInternalDebugAuth } from "@/lib/auth/internal-debug";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = checkInternalDebugAuth(req);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+  }
+
   const client = createServerClient();
 
   if (!client) {
     return NextResponse.json({
       ok: true,
       source: "mock_fallback",
+      ...(auth.devBypass && { environment: "development" }),
       daily_decision: null,
       publish_job: null,
     });
@@ -54,6 +61,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       source: "supabase",
+      ...(auth.devBypass && { environment: "development" }),
       daily_decision: row
         ? {
             selected_topic: row.selected_topic,
@@ -71,6 +79,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       source: "mock_fallback",
+      ...(auth.devBypass && { environment: "development" }),
       daily_decision: null,
       publish_job: null,
     });

@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
+import { checkInternalDebugAuth } from "@/lib/auth/internal-debug";
 
 async function tryRead(
   client: ReturnType<typeof createServerClient>,
@@ -16,7 +17,12 @@ async function tryRead(
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const auth = checkInternalDebugAuth(req);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, message: "Unauthorized" }, { status: 401 });
+  }
+
   const client = createServerClient();
   const configured = !!(
     process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -25,7 +31,7 @@ export async function GET() {
   if (!client || !configured) {
     return NextResponse.json({
       ok: true,
-      environment: "server",
+      environment: auth.devBypass ? "development" : "production",
       supabase: { configured: false, readable: false },
       source: "mock_fallback",
       checks: {
@@ -48,7 +54,7 @@ export async function GET() {
 
   return NextResponse.json({
     ok: true,
-    environment: "server",
+    environment: auth.devBypass ? "development" : "production",
     supabase: { configured: true, readable },
     source: readable ? "supabase" : "mock_fallback",
     checks: {
