@@ -125,8 +125,6 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [scoreVisible, setScoreVisible] = useState(false);
   const [dbHome, setDbHome] = useState<{ topic: string; score: number; grade: string; mainJudgment: string; whyToday: string; status?: string } | null>(null);
-  const [debugSource, setDebugSource] = useState<string | null>(null);
-
   useEffect(() => {
     setReady(true);
     const t = setTimeout(() => setScoreVisible(true), 600);
@@ -134,12 +132,6 @@ export default function Home() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d) setDbHome(d); })
       .catch(() => {});
-    if (typeof window !== "undefined" && window.location.search.includes("debug=source")) {
-      fetch("/api/debug/data-source")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (d?.source) setDebugSource(d.source); })
-        .catch(() => {});
-    }
     return () => clearTimeout(t);
   }, []);
 
@@ -422,12 +414,6 @@ export default function Home() {
           )}
 
         </div>
-
-        {debugSource && (
-          <p style={{ color: "#252220", fontSize: 10, textAlign: "center", marginTop: 8, letterSpacing: "0.04em" }}>
-            Data source: {debugSource === "supabase" ? "Supabase" : "Mock fallback"}
-          </p>
-        )}
 
       </main>
     </div>
