@@ -756,7 +756,7 @@ export default function DecisionPage() {
                           border: "1px solid rgba(249,115,22,0.12)",
                         }}
                       >
-                        Force Publish
+                        Force Schedule
                       </button>
                     )}
                   </div>

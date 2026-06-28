@@ -43,10 +43,10 @@ const WHY_TODAY =
   "退休話題正在升溫，但還沒有過度擁擠。你的品牌最近七天沒有延續這條線，今天適合接上。";
 
 const READINESS = [
-  "Decision approved by Phoenix",
+  "Decision approved",
   "Carousel draft ready",
   "Caption ready",
-  "Brand DNA matched",
+  "Schedule ready",
 ];
 
 const DRAFT_READINESS = [
@@ -301,10 +301,10 @@ export default function Home() {
                   </button>
                 </div>
 
-                {/* ── Ready to publish / Waiting for review ── */}
+                {/* ── Schedule ready / Waiting for review ── */}
                 <div style={{ marginBottom: 10 }}>
                   <p style={{ color: "#3E3B37", fontSize: 8, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6 }}>
-                    {dbHome?.status === "draft" ? "Waiting for review" : "Ready to publish"}
+                    {dbHome?.status === "draft" ? "Waiting for review" : "Schedule ready"}
                   </p>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8, rowGap: 4 }}>
                     {(dbHome?.status === "draft" ? DRAFT_READINESS : READINESS).map((item, i) => (
@@ -378,7 +378,7 @@ export default function Home() {
                       onClick={() => router.push("/publish")}
                       style={{ width: "100%", height: 46, borderRadius: 12, background: "rgba(249,115,22,0.06)", color: "#FB923C", fontSize: 13, fontWeight: 500, letterSpacing: "-0.01em", border: "1px solid rgba(249,115,22,0.12)" }}
                     >
-                      Publish
+                      View Schedule
                     </button>
                   </div>
                 )}

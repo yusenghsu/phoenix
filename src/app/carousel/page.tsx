@@ -514,8 +514,8 @@ export default function CarouselPage() {
                 }}
               >
                 {approving
-                  ? (dbCarousel?.decisionStatus === "draft" ? "Approving..." : "Scheduling...")
-                  : (dbCarousel?.decisionStatus === "draft" ? "Approve Draft" : "Approve & Publish")}
+                  ? "Scheduling..."
+                  : (dbCarousel?.decisionStatus === "draft" ? "Approve Draft" : "Approve & Schedule")}
               </button>
 
               <button
