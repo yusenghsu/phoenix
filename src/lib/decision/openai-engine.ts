@@ -1,4 +1,3 @@
-import "server-only";
 import OpenAI from "openai";
 import type { DecisionEngineInput, DecisionEngineOutput } from "./types";
 import { runMockDecisionEngine } from "./mock-engine";

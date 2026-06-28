@@ -107,6 +107,19 @@ The system prompt instructs Phoenix to:
 
 ---
 
+## Dry Run API
+
+Issue #027 adds a protected dry run endpoint for testing OpenAI decisions without saving results.
+
+```
+POST /api/debug/openai-decision-dry-run
+Header: x-openai-dry-run-secret
+```
+
+See `docs/openai-dry-run.md` for full details.
+
+---
+
 ## Future
 
 - Replace mock daily cron with OpenAI provider when ready
