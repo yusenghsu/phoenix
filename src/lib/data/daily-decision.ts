@@ -21,7 +21,9 @@ function capitalize(s: string): string {
 export async function runDailyDecision(
   client: SupabaseClient
 ): Promise<DailyDecisionResult> {
-  const today = new Date().toISOString().split("T")[0];
+  // Use Taiwan date so decision_date matches what the user sees in their timezone.
+  // Cron fires at 19:00 UTC = 03:00 Taiwan next day — UTC date would be off by one.
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
   const now = new Date().toISOString();
 
   // 1. Load user

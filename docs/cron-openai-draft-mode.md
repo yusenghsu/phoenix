@@ -2,9 +2,64 @@
 
 ## Purpose
 
-Phoenix can generate a daily OpenAI decision draft at 03:00.
+Phoenix generates a daily decision draft at 03:00 Taiwan time every day.
 
 The cron always creates a **draft** — never a scheduled or published post. The creator reviews and approves before anything is scheduled.
+
+---
+
+## Timezone Rules
+
+All date and time values in Phoenix use **Asia/Taipei (UTC+8)** as the reference timezone.
+
+### Cron Schedule
+
+| Field | Value |
+|---|---|
+| `vercel.json` schedule | `0 19 * * *` (UTC) |
+| Fires at (UTC) | 19:00 UTC |
+| Fires at (Taiwan) | 03:00 Taiwan (next calendar day) |
+
+**Why 19:00 UTC?** Vercel cron uses UTC. Taiwan is UTC+8, so:
+
+```
+Taiwan 03:00 = UTC 19:00 (previous calendar day)
+Example: Taiwan 2026-06-30 03:00 = UTC 2026-06-29 19:00
+```
+
+### `decision_date` — Taiwan date
+
+`decision_date` is stored as the **Taiwan calendar date**, not the UTC date.
+
+```ts
+// Correct — uses Taiwan date
+const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+// At UTC 2026-06-29T19:00 → returns "2026-06-30" (Taiwan date) ✓
+
+// Wrong — UTC date would be one day behind
+const today = new Date().toISOString().split("T")[0];
+// At UTC 2026-06-29T19:00 → returns "2026-06-29" (UTC date) ✗
+// User in Taiwan wakes at 08:00 June 30 → query finds nothing → mock data shown
+```
+
+This applies to:
+- `src/lib/data/daily-decision.ts` — stores `decision_date`
+- `src/lib/data/queries.ts` — `todayDate()` looks up today's decision
+- `src/lib/data/actions.ts` — `getTodayDecisionId()` used during approval/reject
+
+### `scheduled_at` — stored as UTC, displayed as Taiwan
+
+When the user approves a decision, `publish_jobs.scheduled_at` stores **20:00 Taiwan = 12:00 UTC**:
+
+```ts
+// Correct — computes 20:00 Taiwan → 12:00 UTC
+const taipeiDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
+const scheduledAt = new Date(`${taipeiDate}T12:00:00.000Z`);
+```
+
+Display in `formatScheduledAt` uses Taiwan timezone via `Intl.DateTimeFormat`:
+- `12:00 UTC` → `20:00 Asia/Taipei` → displayed as "Today 20:00" ✓
+- Sanity check: if Taiwan hour is outside 18–22, falls back to "Today 20:00"
 
 ---
 
@@ -37,9 +92,10 @@ Both modes produce the same output format and same DB write pattern (`draft` + `
 | Field | Value |
 |---|---|
 | `daily_decisions.status` | `draft` |
+| `daily_decisions.decision_date` | Taiwan date (YYYY-MM-DD) |
 | `publish_jobs.status` | `pending` |
 | `publish_jobs.force_publish` | `false` |
-| `publish_jobs.scheduled_at` | `null` |
+| `publish_jobs.scheduled_at` | `null` (set to 12:00 UTC on approval) |
 
 ---
 

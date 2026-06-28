@@ -78,7 +78,11 @@ function toCarousel(row: Record<string, unknown>): Omit<CarouselDraft, "slides">
 }
 
 function todayDate() {
-  return new Date().toISOString().split("T")[0];
+  // Always use Taiwan date (Asia/Taipei = UTC+8).
+  // Cron fires at 19:00 UTC = 03:00 Taiwan next day — UTC date would be
+  // one day behind Taiwan, causing "today" lookups to miss the new draft
+  // from 08:00 Taiwan until the next cron cycle.
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
 }
 
 // ─── Query functions ───────────────────────────────────────────────────────────

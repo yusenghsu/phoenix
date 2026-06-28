@@ -12,7 +12,8 @@ const MOCK_FALLBACK = {
 const MOCK_USER_ID = "a0000000-0000-0000-0000-000000000001";
 
 async function getTodayDecisionId(client: Client): Promise<string | null> {
-  const today = new Date().toISOString().split("T")[0];
+  // Use Taiwan date — must match the date stored by the cron (daily-decision.ts).
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
   const { data } = await client
     .from("daily_decisions")
     .select("id")
