@@ -53,8 +53,18 @@ export async function POST(req: NextRequest) {
   const input = { user, creatorDNA, recentPosts, todayDate: today, existingRecentDecisions };
 
   const apiKeyPresent = !!process.env.OPENAI_API_KEY;
-
   const result = await runOpenAIDecisionEngine(input);
+
+  const safeDecision = {
+    selectedTopic: result.selectedTopic,
+    confidenceScore: result.confidenceScore,
+    mainJudgment: result.mainJudgment,
+    risk: result.risk,
+    decisionFactors: result.decisionFactors,
+    candidatesCount: result.candidates.length,
+    carouselSlidesCount: result.carouselSlides.length,
+    captionPreview: result.carouselDraft.caption.slice(0, 100),
+  };
 
   if (!apiKeyPresent) {
     return NextResponse.json({
@@ -63,15 +73,12 @@ export async function POST(req: NextRequest) {
       mode: "dry_run",
       writes: false,
       message: "OpenAI key missing. Returned mock decision instead.",
-      decision: {
-        selectedTopic: result.selectedTopic,
-        confidenceScore: result.confidenceScore,
-        mainJudgment: result.mainJudgment,
-        risk: result.risk,
-        candidatesCount: result.candidates.length,
-        carouselSlidesCount: result.carouselSlides.length,
-        captionPreview: result.carouselDraft.caption.slice(0, 100),
-      },
+      decision: safeDecision,
+      candidates: result.candidates,
+      carouselSlides: result.carouselSlides,
+      caption: result.carouselDraft.caption,
+      hashtags: result.carouselDraft.hashtags,
+      learningLog: result.learningLog,
     });
   }
 
@@ -80,17 +87,10 @@ export async function POST(req: NextRequest) {
     source: "openai",
     mode: "dry_run",
     writes: false,
-    decision: {
-      selectedTopic: result.selectedTopic,
-      confidenceScore: result.confidenceScore,
-      mainJudgment: result.mainJudgment,
-      risk: result.risk,
-      candidatesCount: result.candidates.length,
-      carouselSlidesCount: result.carouselSlides.length,
-      captionPreview: result.carouselDraft.caption.slice(0, 100),
-    },
+    decision: safeDecision,
     candidates: result.candidates,
     carouselSlides: result.carouselSlides,
+    caption: result.carouselDraft.caption,
     hashtags: result.carouselDraft.hashtags,
     learningLog: result.learningLog,
   });
