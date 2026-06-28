@@ -6,7 +6,7 @@ import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
-type Decision = "Published" | "Rejected" | "Scheduled";
+type Decision = "Published" | "Rejected" | "Scheduled" | "Draft";
 
 interface DecisionRecord {
   date: string;
@@ -129,6 +129,11 @@ function DecisionBadge({ status }: { status: Decision }) {
       bg: "rgba(249,115,22,0.07)",
       border: "rgba(249,115,22,0.15)",
       color: "#FB923C",
+    },
+    Draft: {
+      bg: "rgba(249,115,22,0.04)",
+      border: "rgba(249,115,22,0.10)",
+      color: "#8C8784",
     },
     Rejected: {
       bg: "rgba(255,255,255,0.03)",
@@ -323,7 +328,7 @@ function TimelineCard({ record, index }: { record: DecisionRecord; index: number
 export default function HistoryPage() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
-  const [dbHistory, setDbHistory] = useState<{ todayTopic: string | null; learnings: string[] } | null>(null);
+  const [dbHistory, setDbHistory] = useState<{ todayTopic: string | null; todayStatus: string | null; learnings: string[] } | null>(null);
 
   useEffect(() => {
     setReady(true);
@@ -334,8 +339,29 @@ export default function HistoryPage() {
   }, []);
 
   const displayLearnings = dbHistory?.learnings ?? LEARNINGS;
+
+  function dbStatusToDecision(status: string | null | undefined): Decision | null {
+    if (!status) return null;
+    const map: Record<string, Decision> = {
+      draft: "Draft",
+      rejected: "Rejected",
+      scheduled: "Scheduled",
+      approved: "Scheduled",
+      published: "Published",
+    };
+    return map[status] ?? null;
+  }
+
   const displayRecords = dbHistory?.todayTopic
-    ? RECORDS.map((r, i) => i === 0 ? { ...r, topic: dbHistory.todayTopic! } : r)
+    ? RECORDS.map((r, i) => {
+        if (i !== 0) return r;
+        const mapped = dbStatusToDecision(dbHistory.todayStatus);
+        return {
+          ...r,
+          topic: dbHistory.todayTopic!,
+          decision: mapped ?? r.decision,
+        };
+      })
     : RECORDS;
 
   return (

@@ -49,6 +49,13 @@ const READINESS = [
   "Brand DNA matched",
 ];
 
+const DRAFT_READINESS = [
+  "Decision draft ready",
+  "Carousel draft ready",
+  "Caption draft ready",
+  "Waiting for 小佑 review",
+];
+
 // ─── Score Ring ───────────────────────────────────────────────────────────────
 
 function ScoreRing({
@@ -117,7 +124,7 @@ export default function Home() {
   const [analyzing, setAnalyzing] = useState(false);
   const [ready, setReady] = useState(false);
   const [scoreVisible, setScoreVisible] = useState(false);
-  const [dbHome, setDbHome] = useState<{ topic: string; score: number; grade: string; mainJudgment: string; whyToday: string } | null>(null);
+  const [dbHome, setDbHome] = useState<{ topic: string; score: number; grade: string; mainJudgment: string; whyToday: string; status?: string } | null>(null);
   const [debugSource, setDebugSource] = useState<string | null>(null);
 
   useEffect(() => {
@@ -294,13 +301,13 @@ export default function Home() {
                   </button>
                 </div>
 
-                {/* ── Ready to publish ── */}
+                {/* ── Ready to publish / Waiting for review ── */}
                 <div style={{ marginBottom: 10 }}>
                   <p style={{ color: "#3E3B37", fontSize: 8, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 6 }}>
-                    Ready to publish
+                    {dbHome?.status === "draft" ? "Waiting for review" : "Ready to publish"}
                   </p>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 8, rowGap: 4 }}>
-                    {READINESS.map((item, i) => (
+                    {(dbHome?.status === "draft" ? DRAFT_READINESS : READINESS).map((item, i) => (
                       <div
                         key={item}
                         className="animate-fade-up"
@@ -319,26 +326,62 @@ export default function Home() {
                 </div>
 
                 {/* ── Main actions ── */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <button
-                    onClick={() => router.push("/carousel")}
-                    style={{ width: "100%", height: 50, borderRadius: 14, background: "#FAFAF9", color: "#0C0A08", fontSize: 14, fontWeight: 600, letterSpacing: "-0.01em", border: "none" }}
-                  >
-                    View Today&apos;s Carousel
-                  </button>
-                  <button
-                    onClick={() => router.push("/decision")}
-                    style={{ width: "100%", height: 46, borderRadius: 12, background: "rgba(255,255,255,0.04)", color: "#FAFAF9", fontSize: 13, fontWeight: 500, letterSpacing: "-0.01em", border: "1px solid rgba(255,255,255,0.1)" }}
-                  >
-                    View Decision
-                  </button>
-                  <button
-                    onClick={() => router.push("/publish")}
-                    style={{ width: "100%", height: 46, borderRadius: 12, background: "rgba(249,115,22,0.06)", color: "#FB923C", fontSize: 13, fontWeight: 500, letterSpacing: "-0.01em", border: "1px solid rgba(249,115,22,0.12)" }}
-                  >
-                    Publish
-                  </button>
-                </div>
+                {dbHome?.status === "draft" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.12)", marginBottom: 2 }}>
+                      <p style={{ color: "#FB923C", fontSize: 12, lineHeight: 1.5, letterSpacing: "-0.005em" }}>
+                        Phoenix 已為你準備了一份草稿決策，等待你審核後排程發布。
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => router.push("/decision")}
+                      style={{ width: "100%", height: 50, borderRadius: 14, background: "#FAFAF9", color: "#0C0A08", fontSize: 14, fontWeight: 600, letterSpacing: "-0.01em", border: "none" }}
+                    >
+                      Review Draft
+                    </button>
+                    <button
+                      onClick={() => router.push("/carousel")}
+                      style={{ width: "100%", height: 46, borderRadius: 12, background: "rgba(255,255,255,0.04)", color: "#FAFAF9", fontSize: 13, fontWeight: 500, letterSpacing: "-0.01em", border: "1px solid rgba(255,255,255,0.1)" }}
+                    >
+                      View Carousel
+                    </button>
+                  </div>
+                ) : dbHome?.status === "rejected" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ padding: "10px 14px", borderRadius: 10, background: "rgba(255,255,255,0.025)", border: "1px solid rgba(255,255,255,0.06)" }}>
+                      <p style={{ color: "#52504E", fontSize: 12, lineHeight: 1.5, letterSpacing: "-0.005em" }}>
+                        今天的決策已被拒絕。Phoenix 將在今晚 03:00 重新分析。
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => router.push("/history")}
+                      style={{ width: "100%", height: 46, borderRadius: 12, background: "rgba(255,255,255,0.04)", color: "#FAFAF9", fontSize: 13, fontWeight: 500, letterSpacing: "-0.01em", border: "1px solid rgba(255,255,255,0.1)" }}
+                    >
+                      View History
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <button
+                      onClick={() => router.push("/carousel")}
+                      style={{ width: "100%", height: 50, borderRadius: 14, background: "#FAFAF9", color: "#0C0A08", fontSize: 14, fontWeight: 600, letterSpacing: "-0.01em", border: "none" }}
+                    >
+                      View Today&apos;s Carousel
+                    </button>
+                    <button
+                      onClick={() => router.push("/decision")}
+                      style={{ width: "100%", height: 46, borderRadius: 12, background: "rgba(255,255,255,0.04)", color: "#FAFAF9", fontSize: 13, fontWeight: 500, letterSpacing: "-0.01em", border: "1px solid rgba(255,255,255,0.1)" }}
+                    >
+                      View Decision
+                    </button>
+                    <button
+                      onClick={() => router.push("/publish")}
+                      style={{ width: "100%", height: 46, borderRadius: 12, background: "rgba(249,115,22,0.06)", color: "#FB923C", fontSize: 13, fontWeight: 500, letterSpacing: "-0.01em", border: "1px solid rgba(249,115,22,0.12)" }}
+                    >
+                      Publish
+                    </button>
+                  </div>
+                )}
 
               </div>
             </div>

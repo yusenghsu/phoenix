@@ -220,7 +220,7 @@ export default function CarouselPage() {
   const [ready, setReady] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [captionExpanded, setCaptionExpanded] = useState(false);
-  const [dbCarousel, setDbCarousel] = useState<{ captionBrief: string; captionFull: string; hashtags: string[] } | null>(null);
+  const [dbCarousel, setDbCarousel] = useState<{ captionBrief: string; captionFull: string; hashtags: string[]; decisionStatus?: string } | null>(null);
   const [approving, setApproving] = useState(false);
   const total = SLIDES.length;
 
@@ -453,7 +453,9 @@ export default function CarouselPage() {
                   transition: "opacity 0.2s",
                 }}
               >
-                {approving ? "Scheduling..." : "Approve & Publish"}
+                {approving
+                  ? (dbCarousel?.decisionStatus === "draft" ? "Approving..." : "Scheduling...")
+                  : (dbCarousel?.decisionStatus === "draft" ? "Approve Draft" : "Approve & Publish")}
               </button>
 
               <button

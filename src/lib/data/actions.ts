@@ -84,6 +84,13 @@ async function upsertPublishJob(
   return !error;
 }
 
+async function cancelPublishJob(client: Client, decisionId: string): Promise<void> {
+  await client
+    .from("publish_jobs")
+    .update({ status: "cancelled", updated_at: new Date().toISOString() })
+    .eq("daily_decision_id", decisionId);
+}
+
 async function insertLearningLog(
   client: Client,
   decisionId: string,
@@ -140,6 +147,7 @@ export async function rejectDecision() {
         "rejection",
         "小佑拒絕了今天的推薦，Phoenix 將在下一次週期重新分析。"
       ),
+      cancelPublishJob(client, decisionId),
     ]);
 
     if (!decisionOk || !logOk) return MOCK_FALLBACK;

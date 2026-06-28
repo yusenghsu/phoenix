@@ -167,6 +167,7 @@ export default function DecisionPage() {
     rejected: typeof REJECTED;
     matrix: typeof MATRIX;
     risk: string;
+    status?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -192,6 +193,15 @@ export default function DecisionPage() {
     setActionTaken("publish");
     await Promise.all([
       fetch("/api/actions/force-publish", { method: "POST" }).catch(() => {}),
+      new Promise((resolve) => setTimeout(resolve, 800)),
+    ]);
+    router.push("/publish");
+  }
+
+  async function handleApproveDraft() {
+    setActionTaken("publish");
+    await Promise.all([
+      fetch("/api/actions/approve", { method: "POST" }).catch(() => {}),
       new Promise((resolve) => setTimeout(resolve, 800)),
     ]);
     router.push("/publish");
@@ -779,7 +789,7 @@ export default function DecisionPage() {
                     View Carousel
                   </button>
 
-                  {/* Reject + Force Publish */}
+                  {/* Reject + Approve Draft (draft) or Force Publish (non-draft) */}
                   <div style={{ display: "flex", gap: 8 }}>
                     <button
                       onClick={handleReject}
@@ -796,21 +806,39 @@ export default function DecisionPage() {
                     >
                       Reject
                     </button>
-                    <button
-                      onClick={handleForcePublish}
-                      style={{
-                        flex: 1,
-                        height: 44,
-                        borderRadius: 12,
-                        background: "rgba(249,115,22,0.07)",
-                        color: "#FB923C",
-                        fontSize: 13,
-                        fontWeight: 500,
-                        border: "1px solid rgba(249,115,22,0.12)",
-                      }}
-                    >
-                      Force Publish
-                    </button>
+                    {dbDecision?.status === "draft" ? (
+                      <button
+                        onClick={handleApproveDraft}
+                        style={{
+                          flex: 1,
+                          height: 44,
+                          borderRadius: 12,
+                          background: "rgba(249,115,22,0.07)",
+                          color: "#FB923C",
+                          fontSize: 13,
+                          fontWeight: 500,
+                          border: "1px solid rgba(249,115,22,0.12)",
+                        }}
+                      >
+                        Approve Draft
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleForcePublish}
+                        style={{
+                          flex: 1,
+                          height: 44,
+                          borderRadius: 12,
+                          background: "rgba(249,115,22,0.07)",
+                          color: "#FB923C",
+                          fontSize: 13,
+                          fontWeight: 500,
+                          border: "1px solid rgba(249,115,22,0.12)",
+                        }}
+                      >
+                        Force Publish
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

@@ -47,6 +47,7 @@ export async function GET(request: NextRequest) {
         grade: scoreGrade(decision.confidenceScore),
         mainJudgment: decision.mainJudgment,
         whyToday: decision.risk,
+        status: decision.status,
       });
     }
 
@@ -87,11 +88,15 @@ export async function GET(request: NextRequest) {
         matrix,
         risk: decision.risk,
         mainJudgment: decision.mainJudgment,
+        status: decision.status,
       });
     }
 
     if (type === "carousel") {
-      const carousel = await getCarouselDraft();
+      const [carousel, decision] = await Promise.all([
+        getCarouselDraft(),
+        getTodayDecision(),
+      ]);
       const captionLines = carousel.caption.split("\n\n");
       const captionBrief = captionLines[0] ?? carousel.caption;
       const hashtags = carousel.hashtags.map((h) =>
@@ -101,6 +106,7 @@ export async function GET(request: NextRequest) {
         captionBrief,
         captionFull: carousel.caption,
         hashtags,
+        decisionStatus: decision.status,
       });
     }
 
@@ -142,6 +148,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         todayTopic: todayRecord?.selectedTopic ?? null,
         todayScore: todayRecord?.confidenceScore ?? null,
+        todayStatus: todayRecord?.status ?? null,
         learnings,
       });
     }
