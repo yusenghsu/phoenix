@@ -25,7 +25,9 @@ async function handle(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       source: "mock_fallback",
-      message: "Daily decision mock run completed.",
+      provider: process.env.DECISION_ENGINE_PROVIDER ?? "mock",
+      writes: false,
+      message: "Daily decision mock run completed. Supabase not configured.",
     });
   }
 
@@ -34,7 +36,27 @@ async function handle(req: NextRequest) {
     return NextResponse.json({ ok: false, message: result.message }, { status: 500 });
   }
 
-  return NextResponse.json(result);
+  if (result.skipped) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: result.reason,
+      decision: result.decision,
+      message: result.message,
+    });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    provider: result.provider,
+    status: result.decision?.status ?? "draft",
+    publishJobStatus: result.publish_job?.status ?? "pending",
+    forcePublish: result.publish_job?.force_publish ?? false,
+    writes: result.writes ?? true,
+    decision: result.decision,
+    carousel_slides: result.carousel_slides,
+    message: result.message,
+  });
 }
 
 export async function GET(req: NextRequest) {

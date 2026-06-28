@@ -62,17 +62,37 @@ export async function resetDemoData(client: SupabaseClient): Promise<{
 }> {
   const now = new Date().toISOString();
 
-  // ── 1. Delete in reverse FK order (seed records only) ──────────────────────
+  // ── 1. Delete ALL records for this user in reverse FK order ──────────────────
+  // Must cover non-seed records (e.g. from cron/OpenAI runs), not just seed UUIDs.
 
-  await client.from("learning_logs").delete().in("id", [U.log1, U.log2, U.log3, U.log4, U.log5]);
-  await client.from("publish_jobs").delete().eq("id", U.publishJob);
-  await client.from("carousel_slides").delete().eq("carousel_draft_id", U.draft);
-  await client.from("carousel_drafts").delete().eq("id", U.draft);
-  await client.from("decision_candidates").delete().eq("daily_decision_id", U.decision);
-  await client.from("daily_decisions").delete().eq("id", U.decision);
-  await client.from("instagram_posts").delete().eq("instagram_account_id", U.igAccount);
-  await client.from("instagram_accounts").delete().eq("id", U.igAccount);
-  await client.from("creator_dna").delete().eq("id", U.dna);
+  await client.from("learning_logs").delete().eq("user_id", U.user);
+  await client.from("publish_jobs").delete().eq("user_id", U.user);
+
+  // carousel_slides have no user_id — delete via all carousel_drafts for this user's decisions
+  const { data: allDecisions } = await client
+    .from("daily_decisions")
+    .select("id")
+    .eq("user_id", U.user);
+  const allDecisionIds = (allDecisions ?? []).map((d: { id: string }) => d.id);
+
+  if (allDecisionIds.length > 0) {
+    const { data: allDrafts } = await client
+      .from("carousel_drafts")
+      .select("id")
+      .in("daily_decision_id", allDecisionIds);
+    const allDraftIds = (allDrafts ?? []).map((d: { id: string }) => d.id);
+
+    if (allDraftIds.length > 0) {
+      await client.from("carousel_slides").delete().in("carousel_draft_id", allDraftIds);
+    }
+    await client.from("carousel_drafts").delete().in("daily_decision_id", allDecisionIds);
+    await client.from("decision_candidates").delete().in("daily_decision_id", allDecisionIds);
+  }
+
+  await client.from("daily_decisions").delete().eq("user_id", U.user);
+  await client.from("instagram_posts").delete().eq("user_id", U.user);
+  await client.from("instagram_accounts").delete().eq("user_id", U.user);
+  await client.from("creator_dna").delete().eq("user_id", U.user);
   await client.from("users").delete().eq("id", U.user);
 
   // ── 2. Insert in FK order ──────────────────────────────────────────────────

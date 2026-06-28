@@ -10,6 +10,7 @@
     "check:supabase": "node --env-file=.env.local node_modules/.bin/tsx scripts/check-supabase-read.ts",
     "reset:demo": "node --env-file=.env.local node_modules/.bin/tsx scripts/reset-demo-data.ts",
     "cron:daily": "node --env-file=.env.local node_modules/.bin/tsx scripts/run-daily-decision.ts",
+    "reset:cron-test": "node --env-file=.env.local node_modules/.bin/tsx scripts/reset-cron-test.ts",
     "test:decision": "node --env-file=.env.local node_modules/.bin/tsx scripts/test-openai-decision.ts"
   },
   "dependencies": {

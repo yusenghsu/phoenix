@@ -1,13 +1,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { runMockDecisionEngine } from "@/lib/decision";
+import { runDecisionEngine } from "@/lib/decision";
 
 export type DailyDecisionResult = {
   ok: boolean;
   source: string;
   message: string;
+  skipped?: boolean;
+  reason?: string;
+  provider?: string;
+  writes?: boolean;
   decision?: { selected_topic: string; status: string };
   carousel_slides?: number;
-  publish_job?: { status: string };
+  publish_job?: { status: string; force_publish: boolean };
 };
 
 function capitalize(s: string): string {
@@ -40,28 +44,62 @@ export async function runDailyDecision(
 
   if (existing) {
     const e = existing as { id: string; selected_topic: string; status: string };
-    return {
-      ok: true,
-      source: "supabase",
-      message: "Daily decision already exists.",
-      decision: { selected_topic: e.selected_topic, status: e.status },
-    };
+    if (["scheduled", "approved", "published"].includes(e.status)) {
+      return {
+        ok: true,
+        source: "supabase",
+        message: "Today's decision is already scheduled or published.",
+        skipped: true,
+        reason: "today_already_scheduled",
+        decision: { selected_topic: e.selected_topic, status: e.status },
+      };
+    }
+    if (e.status === "draft") {
+      return {
+        ok: true,
+        source: "supabase",
+        message: "Today's draft decision already exists.",
+        skipped: true,
+        reason: "already_exists",
+        decision: { selected_topic: e.selected_topic, status: e.status },
+      };
+    }
+    if (e.status === "rejected") {
+      return {
+        ok: true,
+        source: "supabase",
+        message: "Today's decision was rejected. Skipping re-run.",
+        skipped: true,
+        reason: "rejected_today",
+        decision: { selected_topic: e.selected_topic, status: e.status },
+      };
+    }
   }
 
-  // 3. Load creator DNA (best-effort, mock engine doesn't require it)
-  const { data: dnaRow } = await client
-    .from("creator_dna")
-    .select("*")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  // 3. Load context for decision engine
+  const [dnaResult, postsResult, recentDecisionsResult] = await Promise.all([
+    client.from("creator_dna").select("*").eq("user_id", user.id).maybeSingle(),
+    client
+      .from("instagram_posts")
+      .select("caption, post_type, metrics, posted_at")
+      .order("posted_at", { ascending: false })
+      .limit(5),
+    client
+      .from("daily_decisions")
+      .select("selected_topic, status, decision_date, confidence_score")
+      .order("decision_date", { ascending: false })
+      .limit(7),
+  ]);
 
-  // 4. Run decision engine
-  const output = runMockDecisionEngine({
+  const provider = process.env.DECISION_ENGINE_PROVIDER ?? "mock";
+
+  // 4. Run decision engine (mock or openai based on DECISION_ENGINE_PROVIDER)
+  const output = await runDecisionEngine({
     user,
-    creatorDNA: (dnaRow as Record<string, unknown>) ?? {},
-    recentPosts: [],
+    creatorDNA: (dnaResult.data as Record<string, unknown>) ?? {},
+    recentPosts: postsResult.data ?? [],
     todayDate: today,
-    existingRecentDecisions: [],
+    existingRecentDecisions: recentDecisionsResult.data ?? [],
   });
 
   // 5. Save daily_decision
@@ -169,9 +207,11 @@ export async function runDailyDecision(
   return {
     ok: true,
     source: "supabase",
-    message: "Daily decision created.",
+    message: "Daily decision created as draft.",
+    provider,
+    writes: true,
     decision: { selected_topic: output.selectedTopic, status: "draft" },
     carousel_slides: output.carouselSlides.length,
-    publish_job: { status: "pending" },
+    publish_job: { status: "pending", force_publish: false },
   };
 }

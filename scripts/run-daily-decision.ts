@@ -23,6 +23,12 @@ const client = createClient(url, key);
 
   console.log("Phoenix daily decision run completed.");
   console.log("source:", result.source);
+  console.log("provider:", result.provider ?? "mock");
+  console.log("writes:", result.writes ?? false);
+  if (result.skipped) {
+    console.log("skipped:", true);
+    console.log("reason:", result.reason);
+  }
   console.log("selected_topic:", result.decision?.selected_topic);
   console.log("decision_status:", result.decision?.status);
   if (result.carousel_slides !== undefined) {
@@ -30,6 +36,7 @@ const client = createClient(url, key);
   }
   if (result.publish_job) {
     console.log("publish_job_status:", result.publish_job.status);
+    console.log("force_publish:", result.publish_job.force_publish);
   }
   console.log("message:", result.message);
 })();
