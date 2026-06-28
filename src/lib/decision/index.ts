@@ -1,4 +1,5 @@
 export { runMockDecisionEngine } from "./mock-engine";
+export { runDecisionEngine } from "./provider";
 export type {
   DecisionEngineInput,
   DecisionEngineOutput,
