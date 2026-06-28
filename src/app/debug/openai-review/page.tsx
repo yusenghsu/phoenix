@@ -32,6 +32,11 @@ type DryRunResult = {
   hashtags?: string[];
   learningLog?: string;
 };
+type SaveResult = {
+  ok: boolean;
+  message: string;
+  decision?: { selectedTopic: string; status: string };
+};
 
 function ScoreBadge({ score }: { score: number }) {
   const color =
@@ -56,11 +61,18 @@ export default function OpenAIReviewPage() {
   const [result, setResult] = useState<DryRunResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [saveSecret, setSaveSecret] = useState("");
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [saveResult, setSaveResult] = useState<SaveResult | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
   async function handleRun() {
     if (!secret.trim()) return;
     setLoading(true);
     setResult(null);
     setError(null);
+    setSaveResult(null);
+    setSaveError(null);
 
     try {
       const res = await fetch("/api/debug/openai-decision-dry-run", {
@@ -82,6 +94,36 @@ export default function OpenAIReviewPage() {
     }
   }
 
+  async function handleSave() {
+    if (!saveSecret.trim()) return;
+    setSaveLoading(true);
+    setSaveResult(null);
+    setSaveError(null);
+
+    try {
+      const res = await fetch("/api/debug/save-openai-decision-draft", {
+        method: "POST",
+        headers: { "x-openai-save-secret": saveSecret },
+      });
+
+      if (res.status === 401) {
+        setSaveError("Unauthorized. Please check your save secret.");
+        return;
+      }
+
+      const data: SaveResult = await res.json();
+      if (!data.ok) {
+        setSaveError(data.message);
+        return;
+      }
+      setSaveResult(data);
+    } catch {
+      setSaveError("Save request failed.");
+    } finally {
+      setSaveLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#0C0A08] text-white">
       <div className="max-w-2xl mx-auto px-6 py-16">
@@ -99,7 +141,7 @@ export default function OpenAIReviewPage() {
           </p>
         </div>
 
-        {/* Input */}
+        {/* Dry Run Input */}
         <div className="space-y-3">
           <label className="block text-xs text-zinc-500 tracking-wide">
             Dry Run Secret
@@ -121,7 +163,7 @@ export default function OpenAIReviewPage() {
           </button>
         </div>
 
-        {/* Error */}
+        {/* Dry Run Error */}
         {error && (
           <div className="mt-6 rounded-lg bg-red-500/10 border border-red-500/20 px-4 py-3 text-sm text-red-400">
             {error}
@@ -141,10 +183,10 @@ export default function OpenAIReviewPage() {
 
             {/* Safety Status */}
             <div className="rounded-lg bg-white/[0.03] border border-white/[0.06] px-5 py-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-zinc-500">
-              <span>Writes: <span className="text-emerald-500 font-semibold">false</span></span>
+              <span>Writes: <span className={saveResult ? "text-amber-400 font-semibold" : "text-emerald-500 font-semibold"}>{saveResult ? "true (draft saved)" : "false"}</span></span>
               <span>Publishing: <span className="text-emerald-500 font-semibold">disabled</span></span>
               <span>Cron impact: <span className="text-emerald-500 font-semibold">none</span></span>
-              <span>Supabase mutation: <span className="text-emerald-500 font-semibold">none</span></span>
+              <span>Publish job: <span className="text-emerald-500 font-semibold">{saveResult ? "pending" : "none"}</span></span>
               <span>Source: <span className="text-zinc-300 font-semibold">{result.source}</span></span>
             </div>
 
@@ -297,6 +339,45 @@ export default function OpenAIReviewPage() {
                 <p className="text-sm text-zinc-500 leading-relaxed">{result.learningLog}</p>
               </Section>
             )}
+
+            {/* Save as Draft */}
+            <div className="mt-10 border-t border-white/[0.06] pt-8">
+              <p className="text-xs font-semibold tracking-widest text-zinc-600 uppercase mb-4">
+                Save This OpenAI Decision
+              </p>
+
+              {saveResult ? (
+                <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-4 py-3 text-sm text-emerald-400">
+                  Saved as draft. No publishing happened.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-zinc-600 leading-relaxed">
+                    This will save a new draft decision to Supabase. It will not publish.
+                  </p>
+                  <label className="block text-xs text-zinc-600 tracking-wide">
+                    Save Secret
+                  </label>
+                  <input
+                    type="password"
+                    value={saveSecret}
+                    onChange={(e) => setSaveSecret(e.target.value)}
+                    placeholder="Enter OPENAI_SAVE_SECRET"
+                    className="w-full bg-white/[0.02] border border-white/[0.06] rounded-lg px-4 py-3 text-sm text-zinc-300 placeholder:text-zinc-700 focus:outline-none focus:border-zinc-500/50 transition-colors"
+                  />
+                  <button
+                    onClick={handleSave}
+                    disabled={saveLoading || !saveSecret.trim()}
+                    className="w-full bg-white/[0.05] hover:bg-white/[0.08] disabled:opacity-40 disabled:cursor-not-allowed text-zinc-300 text-sm rounded-lg px-4 py-2.5 border border-white/[0.08] transition-colors"
+                  >
+                    {saveLoading ? "Saving…" : "Save as Draft"}
+                  </button>
+                  {saveError && (
+                    <p className="text-xs text-red-400">{saveError}</p>
+                  )}
+                </div>
+              )}
+            </div>
 
           </div>
         )}

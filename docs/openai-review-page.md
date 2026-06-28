@@ -53,9 +53,31 @@ Not linked from any nav. Access by URL only.
 
 ---
 
+## Save as Draft
+
+The review page can manually save an OpenAI decision as a draft using `OPENAI_SAVE_SECRET`.
+
+This is separate from dry run.
+
+| Action | Writes | Publishing |
+|---|---|---|
+| Dry run | false | disabled |
+| Save as Draft | true (draft only) | disabled |
+
+Save as Draft:
+- Sets `daily_decisions.status = draft`
+- Creates `publish_jobs.status = pending`
+- Does not publish
+- Does not affect cron
+- Will not overwrite approved/scheduled decisions
+
+See `docs/openai-save-draft.md` for full details.
+
+---
+
 ## Safety
 
-- This page is for review only.
-- It does not approve, schedule, publish, or save anything.
-- Secret is sent as a request header — never stored in localStorage or the database.
+- Dry run never writes to Supabase.
+- Save as Draft writes `draft` status only — no publishing.
+- Secrets are sent as request headers — never stored in localStorage or the database.
 - If OpenAI is unavailable, mock fallback is shown with a notice.
