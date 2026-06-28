@@ -70,12 +70,6 @@ const MATRIX: {
   { topic: "快速成交的三個技巧", market: 59, brand: 42, share: 49, risk: "High", selected: false },
 ];
 
-const RECOMMENDATION_REASONS = [
-  "延續小佑的品牌記憶",
-  "打中讀者正在思考的痛點",
-  "讓內容有被收藏與分享的理由",
-];
-
 const RISK_TEXT = `如果今天不發，退休系列的品牌記憶會中斷。\n\n這個題目不是短期爆點，而是長期信任累積的入口。\n\nPhoenix 判斷今天是適合接上的時間點。`;
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -167,6 +161,7 @@ export default function DecisionPage() {
     rejected: typeof REJECTED;
     matrix: typeof MATRIX;
     risk: string;
+    mainJudgment?: string;
     status?: string;
   } | null>(null);
 
@@ -374,11 +369,10 @@ export default function DecisionPage() {
                     lineHeight: 1.65,
                     letterSpacing: "-0.01em",
                     fontStyle: "italic",
+                    whiteSpace: "pre-line",
                   }}
                 >
-                  我今天沒有選最熱的題目。
-                  <br />
-                  我選的是最適合你品牌長期累積的題目。
+                  {dbDecision?.mainJudgment ?? "我今天沒有選最熱的題目。\n我選的是最適合你品牌長期累積的題目。"}
                 </p>
               </div>
             </div>
@@ -654,81 +648,7 @@ export default function DecisionPage() {
 
           {ready && <Divider />}
 
-          {/* ── Section 5: Phoenix Recommendation ── */}
-          {ready && (
-            <div className="animate-fade-up delay-400">
-              <SectionLabel>Phoenix recommendation</SectionLabel>
-              <p
-                style={{
-                  color: "#FAFAF9",
-                  fontSize: 15,
-                  fontWeight: 500,
-                  lineHeight: 1.6,
-                  letterSpacing: "-0.01em",
-                  marginBottom: 14,
-                }}
-              >
-                我建議今天發布這篇。
-              </p>
-              <p
-                style={{
-                  color: "#8C8784",
-                  fontSize: 14,
-                  lineHeight: 1.72,
-                  letterSpacing: "-0.01em",
-                  marginBottom: 14,
-                }}
-              >
-                不是因為它最容易寫。
-                <br />
-                不是因為它看起來最熱門。
-              </p>
-              <p
-                style={{
-                  color: "#8C8784",
-                  fontSize: 14,
-                  lineHeight: 1.72,
-                  letterSpacing: "-0.01em",
-                  marginBottom: 18,
-                }}
-              >
-                而是因為它最能同時滿足三件事：
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {RECOMMENDATION_REASONS.map((item, i) => (
-                  <div key={i} className="flex items-start gap-3">
-                    <span
-                      style={{
-                        color: "#F97316",
-                        fontSize: 10,
-                        fontWeight: 700,
-                        opacity: 0.55,
-                        letterSpacing: "0.04em",
-                        marginTop: 1,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <p
-                      style={{
-                        color: "#A09D9A",
-                        fontSize: 14,
-                        lineHeight: 1.6,
-                        letterSpacing: "-0.005em",
-                      }}
-                    >
-                      {item}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {ready && <Divider />}
-
-          {/* ── Section 6: Risk ── */}
+          {/* ── Section 5: Risk ── */}
           {ready && (
             <div className="animate-fade-up delay-400">
               <SectionLabel>Risk if we skip today</SectionLabel>

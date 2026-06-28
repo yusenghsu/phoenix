@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
         score: decision.confidenceScore,
         grade: scoreGrade(decision.confidenceScore),
         mainJudgment: decision.mainJudgment,
-        whyToday: decision.risk,
+        whyToday: decision.mainJudgment || "Phoenix 已完成今日草稿決策，等待小佑審核。",
         status: decision.status,
       });
     }
@@ -102,11 +102,17 @@ export async function GET(request: NextRequest) {
       const hashtags = carousel.hashtags.map((h) =>
         h.startsWith("#") ? h : `#${h}`
       );
+      const slides = (carousel.slides ?? []).map((s) => ({
+        slideNumber: s.slideNumber,
+        headline: s.headline,
+        body: s.body,
+      }));
       return NextResponse.json({
         captionBrief,
         captionFull: carousel.caption,
         hashtags,
         decisionStatus: decision.status,
+        slides,
       });
     }
 

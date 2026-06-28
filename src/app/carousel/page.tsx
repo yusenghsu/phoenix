@@ -6,6 +6,12 @@ import { PhoenixHeader } from "@/components/PhoenixHeader";
 
 // ─── Data ─────────────────────────────────────────────────────────────────────
 
+interface DbSlide {
+  slideNumber: number;
+  headline: string;
+  body: string;
+}
+
 interface Slide {
   id: number;
   bg: string;
@@ -93,6 +99,55 @@ const CHECKLIST = [
   "Design DNA matched",
   "Decision approved",
 ];
+
+// ─── DB Slide renderer ────────────────────────────────────────────────────────
+
+function DbSlideContent({ slide, total }: { slide: DbSlide; total: number }) {
+  const isCover = slide.slideNumber === 1;
+  const bg = isCover
+    ? "linear-gradient(150deg, #1C1208 0%, #0E0B07 55%, #0C0A08 100%)"
+    : "linear-gradient(150deg, #0E0B07 0%, #0C0A08 100%)";
+  return (
+    <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", background: bg }}>
+      {/* Page label */}
+      <div className="flex items-center justify-between" style={{ padding: "14px 16px 0" }}>
+        <div className="flex items-center gap-1.5">
+          <div style={{ width: 13, height: 13, borderRadius: 3, background: "linear-gradient(145deg, #F97316, #FB923C)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="6" height="6" viewBox="0 0 10 10" fill="none">
+              <path d="M5 0.5L6.2 3.6H9.5L6.9 5.5L7.9 8.6L5 6.7L2.1 8.6L3.1 5.5L0.5 3.6H3.8L5 0.5Z" fill="white" />
+            </svg>
+          </div>
+          <span style={{ color: "rgba(255,255,255,0.22)", fontSize: 9, fontWeight: 500 }}>小佑</span>
+        </div>
+        <span style={{ color: "rgba(255,255,255,0.18)", fontSize: 9, fontWeight: 500, letterSpacing: "0.04em" }}>
+          {slide.slideNumber} / {total}
+        </span>
+      </div>
+      {/* Content */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: isCover ? "0 28px" : "0 20px" }}>
+        {isCover && (
+          <div style={{ position: "absolute", left: 16, top: "22%", bottom: "22%", width: 2.5, background: "linear-gradient(180deg, #F97316, rgba(249,115,22,0.25))", borderRadius: 2 }} />
+        )}
+        <p style={{
+          color: "#FAFAF9",
+          fontSize: isCover ? 26 : 20,
+          fontWeight: isCover ? 760 : 650,
+          letterSpacing: "-0.035em",
+          lineHeight: 1.25,
+          marginBottom: slide.body ? 14 : 0,
+          whiteSpace: "pre-line",
+        }}>
+          {slide.headline}
+        </p>
+        {slide.body ? (
+          <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, lineHeight: 1.65, letterSpacing: "-0.01em", whiteSpace: "pre-line" }}>
+            {slide.body}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 // ─── Slide renderer ───────────────────────────────────────────────────────────
 
@@ -220,9 +275,10 @@ export default function CarouselPage() {
   const [ready, setReady] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [captionExpanded, setCaptionExpanded] = useState(false);
-  const [dbCarousel, setDbCarousel] = useState<{ captionBrief: string; captionFull: string; hashtags: string[]; decisionStatus?: string } | null>(null);
+  const [dbCarousel, setDbCarousel] = useState<{ captionBrief: string; captionFull: string; hashtags: string[]; decisionStatus?: string; slides?: DbSlide[] } | null>(null);
   const [approving, setApproving] = useState(false);
-  const total = SLIDES.length;
+  const dbSlides = dbCarousel?.slides?.length ? dbCarousel.slides : null;
+  const total = dbSlides ? dbSlides.length : SLIDES.length;
 
   useEffect(() => {
     setReady(true);
@@ -326,7 +382,9 @@ export default function CarouselPage() {
               boxShadow: "0 8px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3)",
             }}>
               <div key={current} className="animate-slide-in" style={{ position: "absolute", inset: 0 }}>
-                <SlideContent slide={SLIDES[current]} total={total} />
+                {dbSlides
+                  ? <DbSlideContent slide={dbSlides[current]} total={total} />
+                  : <SlideContent slide={SLIDES[current]} total={total} />}
               </div>
             </div>
           )}
@@ -352,7 +410,7 @@ export default function CarouselPage() {
               </button>
 
               <div className="flex items-center gap-1.5">
-                {SLIDES.map((_, i) => (
+                {Array.from({ length: total }, (_, i) => (
                   <button
                     key={i}
                     onClick={() => setCurrent(i)}
@@ -398,7 +456,9 @@ export default function CarouselPage() {
                 Slide {current + 1}
               </p>
               <p style={{ color: "#8C8784", fontSize: 13, lineHeight: 1.55, letterSpacing: "-0.01em", whiteSpace: "pre-line" }}>
-                {SLIDES[current].copy}
+                {dbSlides
+                  ? [dbSlides[current].headline, dbSlides[current].body].filter(Boolean).join("\n")
+                  : SLIDES[current].copy}
               </p>
             </div>
           )}
