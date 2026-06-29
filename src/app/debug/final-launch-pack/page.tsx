@@ -1466,6 +1466,21 @@ export default function FinalLaunchStudioPage() {
   const [recoverError, setRecoverError] = useState<string | undefined>(undefined);
   const [recoverDiagnostic, setRecoverDiagnostic] = useState<{ attempted_endpoint?: string; runway_http_status?: number; hint?: string } | undefined>(undefined);
 
+  // Controlled batch state
+  interface BatchState {
+    running: boolean;
+    phase: "idle" | "keyframe" | "motion" | "composition";
+    currentSlideId: string | null;
+    completed: string[];
+    skipped: string[];
+    failed: string | null;
+    error: string | null;
+  }
+  const [batchState, setBatchState] = useState<BatchState>({
+    running: false, phase: "idle", currentSlideId: null, completed: [], skipped: [], failed: null, error: null,
+  });
+  const batchCancelRef = useRef(false);
+
   // Still preview pipeline state (debug)
   const [artworks, setArtworks] = useState<SlideArtworkState[]>(() => slides.map(emptyArtwork));
   const [generating, setGenerating] = useState(false);
@@ -2083,6 +2098,231 @@ export default function FinalLaunchStudioPage() {
       patch({ keyframeStatus: "failed" });
     }
   }, []);
+
+  // ── Controlled Batch Handlers ──────────────────────────────────────────────
+
+  // Computed before batch handlers so they can reference it in deps arrays
+  const slide1EffectiveCompStatus: "missing" | "needed" | "composing" | "composed" | "failed" =
+    slide1FinalVideoUrl && slide1FinalRatioStatus === "passed_4_5" ? "composed" : slide1CompositionStatus;
+
+  // Helper: is a slide READY (fully composed, 4:5 passed)?
+  const isSlideReady = useCallback((state: SlideMotionState): boolean => {
+    return (
+      state.keyframeStatus === "generated" &&
+      state.motionStatus === "generated" &&
+      state.providerRatioStatus === "accepted_intermediate" &&
+      getEffectiveCompositionStatus(state) === "composed" &&
+      state.finalRatioStatus === "passed_4_5" &&
+      !!state.finalVideoUrl
+    );
+  }, []);
+
+  // Batch 1: Generate keyframes for slides without one (skips READY slides)
+  const handleBatchKeyframes = useCallback(async () => {
+    batchCancelRef.current = false;
+    setBatchState({ running: true, phase: "keyframe", currentSlideId: null, completed: [], skipped: [], failed: null, error: null });
+    for (let i = 0; i < slides.length; i++) {
+      if (batchCancelRef.current) break;
+      const config = SLIDE_MOTION_CONFIGS[i];
+      const slideId = config?.slideId ?? `slide-0${String(i + 1).padStart(2, "0")}`;
+      const state = i === 0
+        ? { keyframeStatus: slide1KeyframeStatus, motionStatus: slide1MotionStatus, providerRatioStatus: slide1ProviderRatioStatus, compositionStatus: slide1EffectiveCompStatus, finalRatioStatus: slide1FinalRatioStatus, finalVideoUrl: slide1FinalVideoUrl } as SlideMotionState
+        : (otherSlideStates[i] ?? createEmptySlideMotionState(i));
+
+      // Skip READY slides entirely
+      if (isSlideReady(state)) {
+        setBatchState(prev => ({ ...prev, skipped: [...prev.skipped, slideId] }));
+        continue;
+      }
+      // Skip slides that already have a keyframe
+      if (state.keyframeStatus === "generated" && state.keyframeUrl) {
+        setBatchState(prev => ({ ...prev, skipped: [...prev.skipped, slideId] }));
+        continue;
+      }
+
+      setBatchState(prev => ({ ...prev, currentSlideId: slideId }));
+      const slide = slides[i];
+      const patch = (p: Partial<SlideMotionState>) => {
+        if (i === 0) {
+          if (p.keyframeStatus) setSlide1KeyframeStatus(p.keyframeStatus);
+          if (p.keyframeUrl) setSlide1KeyframeUrl(p.keyframeUrl);
+        } else {
+          setOtherSlideStates(prev => ({ ...prev, [i]: { ...(prev[i] ?? createEmptySlideMotionState(i)), ...p } }));
+        }
+      };
+      patch({ keyframeStatus: "generating", keyframeUrl: undefined });
+      try {
+        const res = await fetch("/api/debug/final-launch/generate-slide", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slide_id: slideId, prompt: slide.still_preview.image_generation_prompt, negative_prompt: slide.still_preview.negative_prompt }),
+        });
+        const data = (await res.json()) as { status: string; image_url?: string; error?: string };
+        if (data.status === "generated" && data.image_url) {
+          patch({ keyframeStatus: "generated", keyframeUrl: data.image_url });
+          setBatchState(prev => ({ ...prev, completed: [...prev.completed, slideId] }));
+        } else {
+          patch({ keyframeStatus: "failed" });
+          setBatchState(prev => ({ ...prev, running: false, failed: slideId, error: data.error ?? "Generation failed", phase: "idle" }));
+          return;
+        }
+      } catch (err) {
+        patch({ keyframeStatus: "failed" });
+        setBatchState(prev => ({ ...prev, running: false, failed: slideId, error: err instanceof Error ? err.message : String(err), phase: "idle" }));
+        return;
+      }
+    }
+    setBatchState(prev => ({ ...prev, running: false, phase: "idle", currentSlideId: null }));
+  }, [slides, slide1KeyframeStatus, slide1MotionStatus, slide1ProviderRatioStatus, slide1EffectiveCompStatus, slide1FinalRatioStatus, slide1FinalVideoUrl, otherSlideStates, isSlideReady]);
+
+  // Batch 2: Generate Runway motion for slides with keyframe but no motion (one at a time)
+  const handleBatchMotion = useCallback(async () => {
+    batchCancelRef.current = false;
+    setBatchState({ running: true, phase: "motion", currentSlideId: null, completed: [], skipped: [], failed: null, error: null });
+    for (let i = 0; i < slides.length; i++) {
+      if (batchCancelRef.current) break;
+      const config = SLIDE_MOTION_CONFIGS[i];
+      const slideId = config?.slideId ?? `slide-0${String(i + 1).padStart(2, "0")}`;
+      const state = i === 0
+        ? { keyframeStatus: slide1KeyframeStatus, keyframeUrl: slide1KeyframeUrl, motionStatus: slide1MotionStatus, providerRatioStatus: slide1ProviderRatioStatus, compositionStatus: slide1EffectiveCompStatus, finalRatioStatus: slide1FinalRatioStatus, finalVideoUrl: slide1FinalVideoUrl, lowRiskKeyframe: false } as SlideMotionState
+        : (otherSlideStates[i] ?? createEmptySlideMotionState(i));
+
+      // Skip READY slides
+      if (isSlideReady(state)) {
+        setBatchState(prev => ({ ...prev, skipped: [...prev.skipped, slideId] }));
+        continue;
+      }
+      // Skip slides without keyframe or already with motion
+      if (state.keyframeStatus !== "generated" || !state.keyframeUrl) {
+        setBatchState(prev => ({ ...prev, skipped: [...prev.skipped, `${slideId}（缺首幀）`] }));
+        continue;
+      }
+      if (state.motionStatus === "generated") {
+        setBatchState(prev => ({ ...prev, skipped: [...prev.skipped, slideId] }));
+        continue;
+      }
+
+      // Prompt safety gate
+      const slideConfig = SLIDE_MOTION_CONFIGS[i];
+      const motionPrompt = slideConfig?.motionPrompt ?? "";
+      const ANIM_RISK_PHRASES = ["animate face", "animate faces", "animate hand", "animate hands", "animate person", "animate people", "animate the face", "create new people", "create new person", "add people", "add person", "close-up face", "extreme close-up", "detailed hand", "finger motion"];
+      const hasHighRisk = ANIM_RISK_PHRASES.some(p => motionPrompt.toLowerCase().includes(p));
+      const kfIsCanonical = !state.keyframeUrl.endsWith("-background.png");
+      if (!kfIsCanonical || hasHighRisk) {
+        setBatchState(prev => ({
+          ...prev, running: false, failed: slideId,
+          error: !kfIsCanonical ? `${slideId}：素材來源不一致，請點選「還原已儲存素材」` : `${slideId}：Prompt 含高風險詞，請修正後重試`,
+          phase: "idle",
+        }));
+        return;
+      }
+
+      setBatchState(prev => ({ ...prev, currentSlideId: slideId }));
+      const patch = (p: Partial<SlideMotionState>) => {
+        if (i === 0) {
+          if (p.motionStatus) setSlide1MotionStatus(p.motionStatus);
+          if (p.motionError) setSlide1MotionError(p.motionError);
+          if (p.providerRatioStatus === "accepted_intermediate") { setSlide1ProviderRatioStatus("accepted_intermediate"); setSlide1CompositionStatus("needed"); }
+          if (p.intermediateVideoUrl) setMotionVideoUrls(prev => ({ ...prev, [0]: p.intermediateVideoUrl! }));
+        } else {
+          setOtherSlideStates(prev => ({ ...prev, [i]: { ...(prev[i] ?? createEmptySlideMotionState(i)), ...p } }));
+          if (p.intermediateVideoUrl) setMotionVideoUrls(prev => ({ ...prev, [i]: p.intermediateVideoUrl! }));
+        }
+      };
+      patch({ motionStatus: "generating", motionError: undefined });
+      try {
+        const res = await fetch("/api/debug/final-launch/generate-motion-from-keyframe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slide_id: slideId, keyframe_url: state.keyframeUrl, motion_prompt: motionPrompt, motion_prompt_mode: "normal", duration_seconds: 5 }),
+        });
+        const data = (await res.json()) as { status: string; background_video_url?: string; error?: string; failure_code?: string; failure_message?: string; task_id?: string };
+        if (data.status === "video_generated" && data.background_video_url) {
+          patch({ motionStatus: "generated", intermediateVideoUrl: data.background_video_url, providerRatioStatus: "accepted_intermediate", compositionStatus: "needed" });
+          setBatchState(prev => ({ ...prev, completed: [...prev.completed, slideId] }));
+        } else {
+          patch({ motionStatus: "failed", motionError: { error: data.error ?? "Runway failed", failure_code: data.failure_code, failure_message: data.failure_message, task_id: data.task_id } });
+          setBatchState(prev => ({
+            ...prev, running: false, failed: slideId,
+            error: `${slideId} Runway 失敗：${data.failure_code ?? ""} ${data.failure_message ?? data.error ?? ""}`.trim(),
+            phase: "idle",
+          }));
+          return;
+        }
+      } catch (err) {
+        patch({ motionStatus: "failed", motionError: { error: err instanceof Error ? err.message : String(err) } });
+        setBatchState(prev => ({ ...prev, running: false, failed: slideId, error: err instanceof Error ? err.message : String(err), phase: "idle" }));
+        return;
+      }
+    }
+    setBatchState(prev => ({ ...prev, running: false, phase: "idle", currentSlideId: null }));
+  }, [slides, slide1KeyframeStatus, slide1KeyframeUrl, slide1MotionStatus, slide1ProviderRatioStatus, slide1EffectiveCompStatus, slide1FinalRatioStatus, slide1FinalVideoUrl, otherSlideStates, isSlideReady]);
+
+  // Batch 3: Compose final 4:5 MP4 for slides with accepted_intermediate but no final video
+  const handleBatchCompose = useCallback(async () => {
+    batchCancelRef.current = false;
+    setBatchState({ running: true, phase: "composition", currentSlideId: null, completed: [], skipped: [], failed: null, error: null });
+    for (let i = 0; i < slides.length; i++) {
+      if (batchCancelRef.current) break;
+      const config = SLIDE_MOTION_CONFIGS[i];
+      const slideId = config?.slideId ?? `slide-0${String(i + 1).padStart(2, "0")}`;
+      const state = i === 0
+        ? { keyframeStatus: slide1KeyframeStatus, motionStatus: slide1MotionStatus, providerRatioStatus: slide1ProviderRatioStatus, compositionStatus: slide1EffectiveCompStatus, finalRatioStatus: slide1FinalRatioStatus, finalVideoUrl: slide1FinalVideoUrl, intermediateVideoUrl: motionVideoUrls[0] } as SlideMotionState
+        : (otherSlideStates[i] ?? createEmptySlideMotionState(i));
+
+      // Skip READY slides
+      if (isSlideReady(state)) {
+        setBatchState(prev => ({ ...prev, skipped: [...prev.skipped, slideId] }));
+        continue;
+      }
+      // Skip slides without accepted_intermediate motion
+      if (state.motionStatus !== "generated" || state.providerRatioStatus !== "accepted_intermediate") {
+        setBatchState(prev => ({ ...prev, skipped: [...prev.skipped, `${slideId}（缺 Runway 中間產出）`] }));
+        continue;
+      }
+      // Skip already composed
+      if (getEffectiveCompositionStatus(state) === "composed" && state.finalVideoUrl) {
+        setBatchState(prev => ({ ...prev, skipped: [...prev.skipped, slideId] }));
+        continue;
+      }
+
+      setBatchState(prev => ({ ...prev, currentSlideId: slideId }));
+      const patch = (p: Partial<SlideMotionState>) => {
+        if (i === 0) {
+          if (p.compositionStatus) setSlide1CompositionStatus(p.compositionStatus);
+          if (p.finalVideoUrl) setSlide1FinalVideoUrl(p.finalVideoUrl);
+          if (p.finalRatioStatus) setSlide1FinalRatioStatus(p.finalRatioStatus);
+          if (p.composingError !== undefined) setSlide1ComposingError(p.composingError);
+        } else {
+          setOtherSlideStates(prev => ({ ...prev, [i]: { ...(prev[i] ?? createEmptySlideMotionState(i)), ...p } }));
+        }
+      };
+      patch({ compositionStatus: "composing", composingError: undefined });
+      try {
+        const endpoint = i === 0 ? "/api/debug/final-launch/compose-slide-01" : "/api/debug/final-launch/compose-slide";
+        const body = i === 0 ? undefined : JSON.stringify({ slide_id: slideId });
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          ...(body ? { body } : {}),
+        });
+        const data = (await res.json()) as { status: string; final_video_url?: string; error?: string };
+        if (data.status === "composed" && data.final_video_url) {
+          patch({ compositionStatus: "composed", finalVideoUrl: data.final_video_url, finalRatioStatus: "passed_4_5" });
+          setBatchState(prev => ({ ...prev, completed: [...prev.completed, slideId] }));
+        } else {
+          patch({ compositionStatus: "failed", composingError: data.error ?? "Composition failed." });
+          setBatchState(prev => ({ ...prev, running: false, failed: slideId, error: data.error ?? "Composition failed", phase: "idle" }));
+          return;
+        }
+      } catch (err) {
+        patch({ compositionStatus: "failed", composingError: err instanceof Error ? err.message : String(err) });
+        setBatchState(prev => ({ ...prev, running: false, failed: slideId, error: err instanceof Error ? err.message : String(err), phase: "idle" }));
+        return;
+      }
+    }
+    setBatchState(prev => ({ ...prev, running: false, phase: "idle", currentSlideId: null }));
+  }, [slides, slide1KeyframeStatus, slide1MotionStatus, slide1ProviderRatioStatus, slide1EffectiveCompStatus, slide1FinalRatioStatus, slide1FinalVideoUrl, motionVideoUrls, otherSlideStates, isSlideReady]);
 
   // Validate Runway intermediate output ratio — dual layer:
   // 1. Browser onLoadedMetadata (dimensions from actual video)
@@ -2829,17 +3069,82 @@ export default function FinalLaunchStudioPage() {
           </p>
         </div>
 
-        {/* ── Generate All Motion Slides (locked) ──────────────── */}
-        <div style={{ marginBottom: 24 }}>
-          <button
-            disabled
-            style={{ width: "100%", height: 46, borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)", color: "#9B9387", fontSize: 13, fontWeight: 700, cursor: "not-allowed", letterSpacing: "0.02em" }}
-          >
-            批次生成 8 張動態輪播｜暫時鎖定
-          </button>
-          <p style={{ color: "#9B9387", fontSize: 10, textAlign: "center", marginTop: 6 }}>
-            所有圖卡提示詞和單張工作流程驗證完成後，批次生成功能將開放。
-          </p>
+        {/* ── Controlled Batch Panel ────────────────────────────── */}
+        <div style={{ marginBottom: 24, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: "18px 20px" }}>
+          <p style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 700, marginBottom: 2 }}>受控批次生成</p>
+          <p style={{ color: "#9B9387", fontSize: 10, marginBottom: 16 }}>逐張處理｜失敗即停止｜已完成張數自動跳過</p>
+
+          {/* Phase buttons */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {/* Batch 1: Keyframes */}
+            <button
+              disabled={batchState.running}
+              onClick={handleBatchKeyframes}
+              style={{ width: "100%", height: 42, borderRadius: 10, background: batchState.running ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)", color: batchState.running ? "#6F675E" : "#CFC7BA", fontSize: 12, fontWeight: 700, cursor: batchState.running ? "not-allowed" : "pointer", textAlign: "left", paddingLeft: 16 }}
+            >
+              1. 批次產生剩餘首幀圖（OpenAI）
+            </button>
+            {/* Batch 2: Runway motion */}
+            <div>
+              <button
+                disabled={batchState.running}
+                onClick={handleBatchMotion}
+                style={{ width: "100%", height: 42, borderRadius: 10, background: batchState.running ? "rgba(255,255,255,0.02)" : "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.18)", color: batchState.running ? "#6F675E" : "#FB923C", fontSize: 12, fontWeight: 700, cursor: batchState.running ? "not-allowed" : "pointer", textAlign: "left", paddingLeft: 16 }}
+              >
+                2. 批次產生剩餘動態背景（Runway，逐張）
+              </button>
+              <p style={{ color: "#6F675E", fontSize: 9, marginTop: 4, paddingLeft: 2 }}>
+                Runway 會消耗 credits。此功能會逐張處理，失敗即停止。建議先確認首幀圖品質後再執行。
+              </p>
+            </div>
+            {/* Batch 3: Compose */}
+            <button
+              disabled={batchState.running}
+              onClick={handleBatchCompose}
+              style={{ width: "100%", height: 42, borderRadius: 10, background: batchState.running ? "rgba(255,255,255,0.02)" : "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.16)", color: batchState.running ? "#6F675E" : "#4ade80", fontSize: 12, fontWeight: 700, cursor: batchState.running ? "not-allowed" : "pointer", textAlign: "left", paddingLeft: 16 }}
+            >
+              3. 批次合成剩餘 4:5 MP4（ffmpeg）
+            </button>
+
+            {/* Cancel */}
+            {batchState.running && (
+              <button
+                onClick={() => { batchCancelRef.current = true; }}
+                style={{ width: "100%", height: 36, borderRadius: 10, background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.20)", color: "#f87171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                停止批次
+              </button>
+            )}
+          </div>
+
+          {/* Batch status */}
+          {batchState.phase !== "idle" || batchState.failed || batchState.completed.length > 0 || batchState.skipped.length > 0 ? (
+            <div style={{ marginTop: 14, background: "rgba(0,0,0,0.25)", borderRadius: 10, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+              {batchState.phase !== "idle" && (
+                <p style={{ color: "#FB923C", fontSize: 10, fontWeight: 700 }}>
+                  目前批次：{batchState.phase === "keyframe" ? "產生首幀圖" : batchState.phase === "motion" ? "產生動態背景" : "合成 4:5 MP4"}
+                </p>
+              )}
+              {batchState.currentSlideId && (
+                <p style={{ color: "#CFC7BA", fontSize: 10 }}>正在處理：{batchState.currentSlideId}</p>
+              )}
+              {batchState.completed.length > 0 && (
+                <p style={{ color: "#4ade80", fontSize: 10 }}>完成：{batchState.completed.join("、")}</p>
+              )}
+              {batchState.skipped.length > 0 && (
+                <p style={{ color: "#9B9387", fontSize: 10 }}>已跳過：{batchState.skipped.join("、")}</p>
+              )}
+              {batchState.failed && (
+                <div>
+                  <p style={{ color: "#f87171", fontSize: 10, fontWeight: 700 }}>失敗停止：{batchState.failed}</p>
+                  {batchState.error && <p style={{ color: "#f87171", fontSize: 9, marginTop: 2, lineHeight: 1.6 }}>{batchState.error}</p>}
+                </div>
+              )}
+              {!batchState.running && !batchState.failed && batchState.completed.length > 0 && (
+                <p style={{ color: "#4ade80", fontSize: 10, fontWeight: 700 }}>批次完成</p>
+              )}
+            </div>
+          ) : null}
         </div>
 
         {/* ── Motion Preview ────────────────────────────────────── */}
