@@ -8,8 +8,10 @@ import {
   updateRunStatus,
   getRunDetails,
   logJobEvent,
+  selectTopic,
   getTaiwanDateString,
 } from "@/lib/daily-workflow/service";
+import { createServerClient } from "@/lib/supabase/server";
 import {
   localGetOrCreateRun,
   localGetTodayRun,
@@ -112,6 +114,42 @@ export async function POST(req: NextRequest) {
       }
       const run = await localUpdateRunStatus(body.run_id, "idle", { reset_at: new Date().toISOString() });
       return NextResponse.json({ status: "ok", storage_mode: "local", run });
+    }
+
+    if (body.action === "select_topic") {
+      const { run_id, topic_candidate_id } = body as { run_id?: string; topic_candidate_id?: string };
+      if (!run_id || !topic_candidate_id) {
+        return NextResponse.json({ error: "run_id and topic_candidate_id are required." }, { status: 400 });
+      }
+      if (!supabaseReady) {
+        return NextResponse.json({ error: "Supabase not available for topic selection." }, { status: 503 });
+      }
+      await selectTopic(run_id, topic_candidate_id, "dashboard", { source: "debug_dashboard" });
+
+      // Fetch candidate title for the event message
+      const db = createServerClient();
+      let topicLabel = topic_candidate_id.slice(0, 8);
+      if (db) {
+        const { data: cand } = await db
+          .from("phoenix_topic_candidates")
+          .select("title, rank")
+          .eq("id", topic_candidate_id)
+          .single();
+        if (cand) topicLabel = `#${cand.rank} ${cand.title}`;
+      }
+
+      try {
+        await logJobEvent({
+          run_id,
+          job_type: "topic_selection",
+          status: "selected",
+          message: `Topic selected via dashboard: ${topicLabel}`,
+          payload: { source: "dashboard", topic_candidate_id },
+        });
+      } catch { /* non-critical */ }
+
+      const details = await getRunDetails(run_id);
+      return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details });
     }
 
     return NextResponse.json({ error: "Unknown action." }, { status: 400 });

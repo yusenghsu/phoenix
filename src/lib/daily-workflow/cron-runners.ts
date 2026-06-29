@@ -2,9 +2,18 @@
 // Called by both the real cron routes (with auth) and the debug proxy (dev only).
 // Never import in client components. Never expose secrets.
 import "server-only";
-import { getOrCreateDailyRun, updateRunStatus, createPublishJob, logJobEvent } from "./service";
+import {
+  getOrCreateDailyRun,
+  updateRunStatus,
+  createTopicCandidates,
+  createPublishJob,
+  logJobEvent,
+} from "./service";
 import { getTaiwanRunDate, logCronTriggered } from "./cron";
+import { getDailyMarketSignals } from "./market-signals";
+import { generateDailyTopicCandidates } from "./topic-generator";
 import { createServerClient } from "@/lib/supabase/server";
+import type { BrandProfile } from "./types";
 
 export interface CronRunResult {
   ok: boolean;
@@ -32,7 +41,7 @@ function buildError(opts: {
   devMode: boolean;
 }): CronRunResult {
   const msg = opts.error instanceof Error ? opts.error.message : String(opts.error);
-  // Print sanitized error — never prints secrets or auth headers
+  // Sanitized — never prints secrets or auth headers
   console.error(`[${opts.route}] stage=${opts.stage}`, msg);
   return {
     ok: false,
@@ -51,7 +60,8 @@ function buildError(opts: {
 }
 
 // ── daily-ideas ───────────────────────────────────────────────────────────────
-// Skeleton: no OpenAI. idle → ideas_generating → waiting_for_selection.
+// Generates 5 topic candidates via OpenAI then waits for selection.
+// No LINE, no Runway, no images, no Instagram.
 
 export async function runDailyIdeas(devMode: boolean): Promise<CronRunResult> {
   const runDate = getTaiwanRunDate();
@@ -71,76 +81,152 @@ export async function runDailyIdeas(devMode: boolean): Promise<CronRunResult> {
       payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status },
     });
 
-    stage = "check_status";
-
-    if (run.status === "waiting_for_selection") {
+    // Non-idle status — skip unless we need to re-enter waiting state
+    if (run.status !== "idle") {
       await logCronTriggered({
         runId: run.id,
         jobType: "daily_ideas",
-        status: "already_waiting",
-        message: "Run already in waiting_for_selection — no change",
+        status: run.status === "waiting_for_selection" ? "already_waiting" : "skipped_non_idle",
+        message: `Run already in status: ${run.status} — skipping`,
         payload: { run_date: runDate },
       });
       return {
         ok: true,
         job_type: "daily_ideas",
-        status: "already_waiting",
+        status: run.status,
         run_date: runDate,
         run_id: run.id,
         dev_mode: devMode,
-        message: "Run already in waiting_for_selection — skipped",
+        message: `Run already in status: ${run.status} — skipped`,
         skipped: true,
       };
     }
 
-    if (run.status === "idle") {
-      stage = "update_status_ideas_generating";
-      await updateRunStatus(run.id, "ideas_generating", { cron_triggered_at: new Date().toISOString() });
-
-      await logCronTriggered({
-        runId: run.id,
-        jobType: "daily_ideas",
-        status: "placeholder",
-        message: "Ideas generation not implemented yet — advancing to waiting_for_selection",
-        payload: { run_date: runDate },
-      });
-
-      stage = "update_status_waiting_for_selection";
-      const updatedRun = await updateRunStatus(run.id, "waiting_for_selection");
-
-      await logCronTriggered({
-        runId: run.id,
-        jobType: "daily_ideas",
-        status: "placeholder_complete",
-        message: "Run advanced to waiting_for_selection (skeleton — no topics generated yet)",
-        payload: { run_date: runDate },
-      });
-
-      return {
-        ok: true,
-        job_type: "daily_ideas",
-        status: updatedRun.status,
-        run_date: runDate,
-        run_id: run.id,
-        dev_mode: devMode,
-        message: "Run advanced to waiting_for_selection (skeleton — no topics generated yet)",
-      };
+    // Check for existing candidates (avoid re-burning OpenAI)
+    stage = "check_existing_candidates";
+    const db = createServerClient();
+    if (db) {
+      const { data: existing } = await db
+        .from("phoenix_topic_candidates")
+        .select("id")
+        .eq("run_id", run.id);
+      if (existing && existing.length >= 5) {
+        await updateRunStatus(run.id, "waiting_for_selection");
+        await logCronTriggered({
+          runId: run.id,
+          jobType: "daily_ideas",
+          status: "skipped_existing_candidates",
+          message: `Already have ${existing.length} candidates — advancing to waiting_for_selection`,
+          payload: { run_date: runDate, candidate_count: existing.length },
+        });
+        return {
+          ok: true,
+          job_type: "daily_ideas",
+          status: "waiting_for_selection",
+          run_date: runDate,
+          run_id: run.id,
+          dev_mode: devMode,
+          message: `Already have ${existing.length} candidates — waiting for selection`,
+          skipped: true,
+          existing_candidate_count: existing.length,
+        };
+      }
     }
 
-    // Any other status — don't error; report current status
+    // Load brand profile
+    stage = "load_brand_profile";
+    let brandProfile: BrandProfile | null = null;
+    if (db) {
+      const { data } = await db
+        .from("phoenix_brand_profiles")
+        .select("*")
+        .eq("profile_key", run.profile_key)
+        .single();
+      brandProfile = data as BrandProfile | null;
+    }
+
+    // Get market signals
+    stage = "get_market_signals";
+    const marketSignals = await getDailyMarketSignals(runDate);
+    await logCronTriggered({
+      runId: run.id,
+      jobType: "daily_ideas",
+      status: "market_signals_loaded",
+      message: `Market signals loaded (source: ${marketSignals.source}, count: ${marketSignals.signals.length})`,
+      payload: { run_date: runDate, source: marketSignals.source },
+    });
+
+    // Advance to ideas_generating before calling OpenAI
+    stage = "update_status_ideas_generating";
+    await updateRunStatus(run.id, "ideas_generating", {
+      cron_triggered_at: new Date().toISOString(),
+    });
+
+    // Call OpenAI — this is the main generation step
+    stage = "generate_candidates";
+    const candidates = await generateDailyTopicCandidates({
+      runDate,
+      profileKey: run.profile_key,
+      brandRole: brandProfile?.role ?? "保險業務訓練者 / 富邦人壽訓練組長 / 保險業內容創作者",
+      brandAudience: brandProfile?.audience ?? "18-35 歲，保險新人、轉職者、對保險業有興趣但害怕被拒絕的人",
+      toneRules: Array.isArray(brandProfile?.tone_rules)
+        ? (brandProfile.tone_rules as string[])
+        : ["真話", "不迎合", "不雞湯", "有主管視角", "能點破新人盲點", "但不要羞辱新人"],
+      contentPillars: Array.isArray(brandProfile?.content_pillars)
+        ? (brandProfile.content_pillars as string[])
+        : ["新人心態破解", "業務實戰技巧", "保險業真相", "職涯建議"],
+      constraints: Array.isArray(brandProfile?.constraints)
+        ? (brandProfile.constraints as string[])
+        : ["不要心靈雞湯", "不要標題黨", "不要過度吹捧"],
+      marketSignals: marketSignals.signals,
+      count: 5,
+    });
+
+    // Write candidates to Supabase
+    stage = "create_candidates";
+    await createTopicCandidates(run.id, candidates);
+    await logCronTriggered({
+      runId: run.id,
+      jobType: "daily_ideas",
+      status: "candidates_generated",
+      message: `${candidates.length} topic candidates generated and saved`,
+      payload: { run_date: runDate, count: candidates.length },
+    });
+
+    // Advance to ideas_ready then waiting_for_selection
+    stage = "update_status_ideas_ready";
+    await updateRunStatus(run.id, "ideas_ready");
+
+    stage = "update_status_waiting_for_selection";
+    const updatedRun = await updateRunStatus(run.id, "waiting_for_selection");
+    await logCronTriggered({
+      runId: run.id,
+      jobType: "daily_ideas",
+      status: "waiting_for_selection",
+      message: "Run is now waiting for topic selection",
+      payload: { run_date: runDate },
+    });
+
     return {
       ok: true,
       job_type: "daily_ideas",
-      status: run.status,
+      status: updatedRun.status,
       run_date: runDate,
       run_id: run.id,
       dev_mode: devMode,
-      message: `Run is already in status: ${run.status} — no change made`,
-      skipped: true,
+      message: `${candidates.length} candidates generated — waiting for selection`,
+      candidate_count: candidates.length,
     };
 
   } catch (err) {
+    // Attempt to mark run as failed
     if (runId) {
+      try {
+        await updateRunStatus(runId, "failed", {
+          error_at: new Date().toISOString(),
+          failed_stage: stage,
+        });
+      } catch { /* don't mask the real error */ }
       try {
         await logJobEvent({
           run_id: runId,

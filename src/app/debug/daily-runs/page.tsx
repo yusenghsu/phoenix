@@ -73,6 +73,7 @@ export default function DailyRunsDebugPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [selectingTopicId, setSelectingTopicId] = useState<string | null>(null);
   const [cronPending, setCronPending] = useState<"ideas" | "generate" | "publish" | null>(null);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
@@ -158,6 +159,45 @@ export default function DailyRunsDebugPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActionPending(false);
+    }
+  };
+
+  const handleSelectTopic = async (candidateId: string) => {
+    if (!run || selectingTopicId) return;
+    setSelectingTopicId(candidateId);
+    setError(null);
+    try {
+      const res = await fetch("/api/debug/daily-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "select_topic", run_id: run.id, topic_candidate_id: candidateId }),
+      });
+      const data = (await res.json()) as {
+        status: string;
+        run?: DailyRun;
+        candidates?: TopicCandidate[];
+        slides?: CarouselSlide[];
+        publishJobs?: PublishJob[];
+        events?: JobEvent[];
+        storage_mode?: "supabase" | "local";
+        error?: string;
+      };
+      if (data.status === "ok") {
+        if (data.run) setRun(data.run);
+        if (data.storage_mode) setStorageMode(data.storage_mode);
+        setDetails({
+          candidates: data.candidates ?? details?.candidates ?? [],
+          slides: data.slides ?? details?.slides ?? [],
+          publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
+          events: data.events ?? details?.events ?? [],
+        });
+      } else {
+        setError(data.error ?? "Failed to select topic");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSelectingTopicId(null);
     }
   };
 
@@ -335,16 +375,77 @@ export default function DailyRunsDebugPage() {
               {!details || details.candidates.length === 0 ? (
                 <p style={{ color: "#6F675E", fontSize: 11 }}>尚無候選主題 — 等待 03:00 AI 生成</p>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {details.candidates.map((c) => (
-                    <div key={c.id} style={{ padding: "10px 12px", background: c.status === "selected" ? "rgba(249,115,22,0.05)" : "rgba(255,255,255,0.02)", border: `1px solid ${c.status === "selected" ? "rgba(249,115,22,0.20)" : "rgba(255,255,255,0.06)"}`, borderRadius: 10 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-                        <p style={{ color: "#FAFAF9", fontSize: 12, fontWeight: 700 }}>#{c.rank} {c.title}</p>
-                        <StatusBadge status={c.status} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {details.candidates.map((c) => {
+                    const isSelected = c.status === "selected";
+                    const isThisRunSelected = !!run?.selected_topic_id;
+                    const slides = (c.draft_slides ?? []) as Array<{ slide_no?: number; slide_role?: string; title_text?: string; body_text?: string }>;
+                    return (
+                      <div key={c.id} style={{ padding: "14px 14px", background: isSelected ? "rgba(249,115,22,0.06)" : "rgba(255,255,255,0.02)", border: `1px solid ${isSelected ? "rgba(249,115,22,0.25)" : "rgba(255,255,255,0.07)"}`, borderRadius: 12 }}>
+                        {/* Header */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+                          <div>
+                            <p style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>
+                              <span style={{ color: "#FB923C", marginRight: 6 }}>#{c.rank}</span>{c.title}
+                            </p>
+                            {c.angle && <p style={{ color: "#9B9387", fontSize: 11, marginTop: 3 }}>{c.angle}</p>}
+                          </div>
+                          <StatusBadge status={c.status} />
+                        </div>
+
+                        {/* Reason */}
+                        {c.reason && (
+                          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 8 }}>📌 {c.reason}</p>
+                        )}
+
+                        {/* Draft Caption */}
+                        {c.draft_caption && (
+                          <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+                            <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>Caption 草稿</p>
+                            <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.6 }}>{c.draft_caption}</p>
+                          </div>
+                        )}
+
+                        {/* Slides */}
+                        {slides.length > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 6 }}>8 張輪播草稿</p>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                              {slides.map((s, i) => (
+                                <div key={i} style={{ background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: "6px 8px" }}>
+                                  <p style={{ color: "#FB923C", fontSize: 8, fontWeight: 700, marginBottom: 2 }}>{s.slide_role ?? `SLIDE ${i + 1}`}</p>
+                                  <p style={{ color: "#CFC7BA", fontSize: 10, fontWeight: 700, marginBottom: 2 }}>{s.title_text ?? ""}</p>
+                                  <p style={{ color: "#6F675E", fontSize: 9, lineHeight: 1.4 }}>{s.body_text ?? ""}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Select button */}
+                        {isSelected ? (
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", background: "rgba(249,115,22,0.08)", borderRadius: 8, border: "1px solid rgba(249,115,22,0.22)" }}>
+                            <span style={{ color: "#FB923C", fontSize: 11, fontWeight: 700 }}>✓ 已選擇</span>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => handleSelectTopic(c.id)}
+                            disabled={isThisRunSelected || selectingTopicId !== null}
+                            style={{
+                              height: 34, paddingLeft: 16, paddingRight: 16, borderRadius: 8,
+                              background: isThisRunSelected ? "rgba(255,255,255,0.02)" : "rgba(249,115,22,0.08)",
+                              border: `1px solid ${isThisRunSelected ? "rgba(255,255,255,0.06)" : "rgba(249,115,22,0.22)"}`,
+                              color: isThisRunSelected ? "#6F675E" : "#FB923C",
+                              fontSize: 12, fontWeight: 700,
+                              cursor: isThisRunSelected || selectingTopicId !== null ? "not-allowed" : "pointer",
+                            }}
+                          >
+                            {selectingTopicId === c.id ? "選擇中…" : "選擇此主題"}
+                          </button>
+                        )}
                       </div>
-                      {c.angle && <p style={{ color: "#9B9387", fontSize: 10, marginTop: 4 }}>{c.angle}</p>}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </SectionCard>
