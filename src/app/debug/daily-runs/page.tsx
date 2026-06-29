@@ -36,19 +36,16 @@ function SectionCard({ title, children }: { title: string; children: React.React
 }
 
 function SlideRow({ s }: { s: CarouselSlide }) {
-  const isReady =
-    s.keyframe_status === "generated" &&
-    s.motion_status === "generated" &&
-    s.provider_ratio_status === "accepted_intermediate" &&
-    s.final_composition_status === "composed" &&
-    s.final_ratio_status === "passed_4_5";
+  const isReady = s.final_ratio_status === "passed_4_5";
   return (
-    <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+    <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
       <span style={{ color: isReady ? "#4ade80" : "#6F675E", fontFamily: "monospace", fontSize: 10, width: 20, flexShrink: 0 }}>{String(s.slide_no).padStart(2, "0")}</span>
-      <span style={{ color: "#CFC7BA", fontSize: 10, width: 80, flexShrink: 0 }}>{s.slide_role ?? "—"}</span>
+      <span style={{ color: "#CFC7BA", fontSize: 10, width: 72, flexShrink: 0 }}>{s.slide_role ?? "—"}</span>
       <StatusBadge status={s.keyframe_status} />
       <StatusBadge status={s.motion_status} />
+      <StatusBadge status={s.provider_ratio_status} />
       <StatusBadge status={s.final_composition_status} />
+      <StatusBadge status={s.final_ratio_status} />
       {isReady && <span style={{ color: "#4ade80", fontSize: 9, fontWeight: 700 }}>READY</span>}
       {s.error_code && <span style={{ color: "#f87171", fontSize: 9 }}>{s.error_code}</span>}
     </div>
@@ -461,17 +458,19 @@ export default function DailyRunsDebugPage() {
             </SectionCard>
 
             {/* Carousel Slides */}
-            <SectionCard title={`動態輪播進度（${details?.slides.filter(s => s.final_composition_status === "composed").length ?? 0} / 8 READY）`}>
+            <SectionCard title={`動態輪播進度（${details?.slides.filter(s => s.final_ratio_status === "passed_4_5").length ?? 0} / 8 READY）`}>
               {!details || details.slides.length === 0 ? (
                 <p style={{ color: "#6F675E", fontSize: 11 }}>尚無 slide 記錄 — 等待 17:00 生成啟動</p>
               ) : (
                 <div>
-                  <div style={{ display: "flex", gap: 10, padding: "4px 0", marginBottom: 4 }}>
+                  <div style={{ display: "flex", gap: 8, padding: "4px 0", marginBottom: 4 }}>
                     <span style={{ color: "#6F675E", fontSize: 9, width: 20 }}>#</span>
-                    <span style={{ color: "#6F675E", fontSize: 9, width: 80 }}>Role</span>
+                    <span style={{ color: "#6F675E", fontSize: 9, width: 72 }}>Role</span>
                     <span style={{ color: "#6F675E", fontSize: 9 }}>KF</span>
                     <span style={{ color: "#6F675E", fontSize: 9 }}>MOT</span>
+                    <span style={{ color: "#6F675E", fontSize: 9 }}>RATIO</span>
                     <span style={{ color: "#6F675E", fontSize: 9 }}>COMP</span>
+                    <span style={{ color: "#6F675E", fontSize: 9 }}>4:5</span>
                   </div>
                   {details.slides.map((s) => <SlideRow key={s.id} s={s} />)}
                 </div>
@@ -517,7 +516,7 @@ export default function DailyRunsDebugPage() {
         {/* Cron Test Panel */}
         <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 18px", marginTop: 24 }}>
           <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Cron Test Panel</p>
-          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 10 }}>Debug only. Calls OpenAI for 03:00 ideas. Does not call LINE, Runway, or Instagram.</p>
+          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 10 }}>Debug only. 03:00 calls OpenAI. 17:00 calls OpenAI（keyframe）+ Runway（motion）— 消耗 credit。不呼叫 LINE / IG。</p>
           {/* Stuck state warning */}
           {run && run.status === "ideas_generating" && (!details || details.candidates.length === 0) && (
             <div style={{ marginBottom: 12, padding: "8px 12px", background: "rgba(249,115,22,0.07)", border: "1px solid rgba(249,115,22,0.22)", borderRadius: 9 }}>

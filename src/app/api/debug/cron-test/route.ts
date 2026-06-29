@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { runDailyIdeas, runDailyGenerate, runDailyPublish } from "@/lib/daily-workflow/cron-runners";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   let body: { type?: string; force?: boolean } = {};

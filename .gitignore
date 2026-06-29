@@ -42,3 +42,4 @@ next-env.d.ts
 
 # generated launch assets — dev-only, never commit
 /public/generated/final-launch-pack/
+/public/generated/daily-runs/

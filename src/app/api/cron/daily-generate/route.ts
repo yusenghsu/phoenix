@@ -1,12 +1,12 @@
 // Cron: 17:00 Taiwan time (UTC 09:00).
-// Triggers carousel generation for the selected topic.
-// Skeleton only — no Runway, no OpenAI.
+// Generates 8 motion carousel slides via OpenAI keyframe + Runway motion + ffmpeg compose.
+// Sequential — no parallel Runway calls. Resumes from last complete slide.
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCronRequest } from "@/lib/daily-workflow/cron";
 import { runDailyGenerate } from "@/lib/daily-workflow/cron-runners";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 export async function GET(req: NextRequest) {
   const auth = verifyCronRequest(req);

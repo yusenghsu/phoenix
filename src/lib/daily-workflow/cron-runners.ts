@@ -10,7 +10,11 @@ import {
   logJobEvent,
   deleteRunCandidates,
   forceResetRunForRegeneration,
+  getRunDetails,
+  getSelectedTopic,
 } from "./service";
+import { generateDailyCarousel } from "./daily-carousel-generator";
+import type { DraftSlide } from "./topic-generator";
 import { getTaiwanRunDate, logCronTriggered } from "./cron";
 import { getDailyMarketSignals } from "./market-signals";
 import { generateDailyTopicCandidates } from "./topic-generator";
@@ -326,7 +330,11 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
 }
 
 // ── daily-generate ────────────────────────────────────────────────────────────
-// Skeleton: no Runway, no OpenAI. Marks generation_queued if topic selected.
+// Generates 8 motion carousel slides from selected topic.
+// Pipeline per slide: keyframe (OpenAI) → motion (Runway) → 4:5 compose (ffmpeg).
+// Sequential — no parallel Runway calls. Stops on any slide failure.
+// Resumes by skipping slides already at final_ratio_status = "passed_4_5".
+// No LINE, no Instagram.
 
 export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult> {
   const runDate = getTaiwanRunDate();
@@ -347,7 +355,6 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
     });
 
     stage = "check_topic_selected";
-
     if (!run.selected_topic_id) {
       await updateRunStatus(run.id, "skipped_no_selection", { skipped_at: new Date().toISOString() });
       await logCronTriggered({
@@ -369,31 +376,139 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
       };
     }
 
+    // Already fully complete — return early
+    if (run.status === "ready_to_publish" || run.status === "published") {
+      return {
+        ok: true,
+        job_type: "daily_generate",
+        status: run.status,
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: `Already ${run.status} — skipping`,
+        skipped: true,
+      };
+    }
+
+    // Load existing slides for resume logic
+    stage = "load_existing_slides";
+    const { slides: existingSlides } = await getRunDetails(run.id);
+    const alreadyReadyCount = existingSlides.filter((s) => s.final_ratio_status === "passed_4_5").length;
+    if (alreadyReadyCount === 8) {
+      stage = "update_status_ready_to_publish";
+      await updateRunStatus(run.id, "ready_to_publish", { generation_complete_at: new Date().toISOString() });
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_generate",
+        status: "generation_complete",
+        message: "8/8 slides already READY — advancing to ready_to_publish",
+        payload: { run_date: runDate, ready_count: 8 },
+      });
+      return {
+        ok: true,
+        job_type: "daily_generate",
+        status: "ready_to_publish",
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: "8/8 slides READY — ready_to_publish",
+        ready_count: 8,
+        skipped: true,
+      };
+    }
+
+    // Load selected topic with draft_slides
+    stage = "load_selected_topic";
+    const selectedTopic = await getSelectedTopic(run.id);
+    if (!selectedTopic) {
+      throw new Error("Selected topic not found in phoenix_topic_candidates");
+    }
+    const draftSlides = (selectedTopic.draft_slides ?? []) as DraftSlide[];
+    if (draftSlides.length < 8) {
+      throw new Error(`Selected topic has only ${draftSlides.length} draft slides — expected 8`);
+    }
+
+    // Mark as generation_queued then generating
     stage = "update_status_generation_queued";
-    const updatedRun = await updateRunStatus(run.id, "generation_queued", {
-      generation_queued_at: new Date().toISOString(),
-    });
+    await updateRunStatus(run.id, "generation_queued", { generation_queued_at: new Date().toISOString() });
     await logCronTriggered({
       runId: run.id,
       jobType: "daily_generate",
       status: "generation_queued",
-      message: "Topic selected — generation queued (skeleton: no images or videos generated yet)",
-      payload: { run_date: runDate, selected_topic_id: run.selected_topic_id },
+      message: `Topic selected — starting carousel generation (${alreadyReadyCount}/8 slides already READY)`,
+      payload: { run_date: runDate, selected_topic_id: run.selected_topic_id, already_ready: alreadyReadyCount },
+    });
+
+    stage = "update_status_generating";
+    await updateRunStatus(run.id, "generating");
+
+    // ── Run full pipeline ─────────────────────────────────────────────────────
+    stage = "generate_carousel";
+    const genResult = await generateDailyCarousel({
+      runId: run.id,
+      runDate,
+      draftSlides,
+      existingSlides,
+    });
+
+    const totalReady = genResult.ready_count + alreadyReadyCount;
+
+    // Log generation outcome
+    if (genResult.stopped_early) {
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_generate",
+        status: "generation_partial",
+        message: `Stopped at slide ${genResult.stop_slide_no} — ${totalReady}/8 READY. Error: ${genResult.stop_reason ?? "unknown"}`,
+        payload: { run_date: runDate, ready_count: totalReady, stop_slide_no: genResult.stop_slide_no, stop_reason: genResult.stop_reason },
+      });
+      return {
+        ok: false,
+        job_type: "daily_generate",
+        status: "generating",
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: `Generation stopped at slide ${genResult.stop_slide_no} — ${totalReady}/8 READY`,
+        ready_count: totalReady,
+        stop_slide_no: genResult.stop_slide_no,
+        stage: "generate_carousel",
+        errorCode: "slide_generation_failed",
+        errorMessage: genResult.stop_reason,
+        devHint: `Check server logs for slide ${genResult.stop_slide_no}. Retry 測試 17:00 生成 Cron to resume.`,
+      };
+    }
+
+    // All 8 slides processed successfully
+    stage = "update_status_ready_to_publish";
+    await updateRunStatus(run.id, "ready_to_publish", {
+      generation_complete_at: new Date().toISOString(),
+      ready_slide_count: totalReady,
+    });
+    await logCronTriggered({
+      runId: run.id,
+      jobType: "daily_generate",
+      status: "generation_complete",
+      message: `8/8 slides READY — ready_to_publish`,
+      payload: { run_date: runDate, ready_count: totalReady },
     });
 
     return {
       ok: true,
       job_type: "daily_generate",
-      status: updatedRun.status,
+      status: "ready_to_publish",
       run_date: runDate,
       run_id: run.id,
       dev_mode: devMode,
-      message: "Generation queued (skeleton — no Runway or OpenAI calls made)",
-      selected_topic_id: run.selected_topic_id,
+      message: "8/8 slides READY — generation complete",
+      ready_count: totalReady,
     };
 
   } catch (err) {
     if (runId) {
+      try {
+        await updateRunStatus(runId, "failed", { error_at: new Date().toISOString(), failed_stage: stage });
+      } catch { /* don't mask the real error */ }
       try {
         await logJobEvent({
           run_id: runId,
