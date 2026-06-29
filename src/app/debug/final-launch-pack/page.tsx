@@ -12,7 +12,8 @@ import { PROVIDER_OPTIONS } from "@/lib/launch/motion-provider";
 import {
   PROVIDER_CAPABILITIES,
   type RatioStatus,
-  validateVideoRatio,
+  type ProviderRatioStatus,
+  validateProviderRatio,
 } from "@/lib/launch/provider-capability";
 import {
   CANVA_MOTION_PACK,
@@ -45,6 +46,58 @@ const SLIDE1_KEYFRAME_PROMPT =
 const SLIDE1_KEYFRAME_NEGATIVE =
   "text, readable signs, logos, watermark, cartoon, anime, orange suit, luxury fashion look, " +
   "influencer style, overbright lighting, distorted hands, extra fingers, fake advertising style, stock photo look";
+
+// Normal motion prompt — matches the route default; passed explicitly for attempt history tracking.
+const SLIDE1_MOTION_PROMPT =
+  "Turn this 4:5 vertical keyframe into a subtle cinematic motion background. " +
+  "Keep the composition and aspect ratio. The young insurance salesperson stays on the right side, " +
+  "looking at the phone. Add very slow push-in camera movement, soft passing car lights in the background, " +
+  "subtle phone glow on the face, minimal subject movement, quiet night atmosphere, restrained emotional tension. " +
+  "Keep the left side clean and dark for Chinese text overlay. " +
+  "No text, no logo, no fast motion, no exaggerated acting, no warped face, no distorted hands.";
+
+// Safe retry prompt — use when normal prompt causes INTERNAL.BAD_OUTPUT or similar Runway failure.
+const SLIDE1_SAFE_RETRY_PROMPT =
+  "Turn this vertical portrait image into a subtle cinematic video. " +
+  "Keep the same composition. Use a very slow push-in camera movement. " +
+  "Keep the person stable and natural. Add only slight background light movement and subtle phone glow. " +
+  "Do not change the face, hands, clothing, phone, or body shape. " +
+  "No text, no logos, no fast motion, no dramatic acting, no camera shake, no distortion.";
+
+// Safer keyframe prompt — more face/hand detail, less dark, better suited for Runway image-to-video.
+const SLIDE1_SAFER_KEYFRAME_PROMPT =
+  "realistic cinematic vertical 4:5 portrait image, Taiwan quiet city street at night, " +
+  "a young Taiwanese insurance salesperson standing on the right third of the frame, " +
+  "looking down at a phone held naturally near chest level, calm and hesitant expression, " +
+  "dark navy business casual jacket, warm street lights, soft background bokeh, " +
+  "enough visible face detail, clean dark negative space on the left half for Chinese text overlay, " +
+  "documentary realism, premium dark orange mood, stable natural pose, simple hands, " +
+  "no readable text, no logos, no cartoon, no anime, no exaggerated expression, " +
+  "no extreme darkness, no fashion ad, no corporate stock photo";
+
+const SLIDE1_SAFER_KEYFRAME_NEGATIVE =
+  "text, readable signs, logos, watermark, cartoon, anime, orange suit, luxury fashion, " +
+  "influencer style, overbright lighting, extreme darkness, distorted hands, extra fingers, " +
+  "malformed phone, fake advertising style, stock photo look";
+
+// Diagnostic data returned by the Runway failure route response
+interface RunwayDiagnostic {
+  error: string;
+  task_id?: string;
+  failure_code?: string;
+  failure_message?: string;
+  debug_hint?: string;
+}
+
+interface MotionAttempt {
+  attempt_number: number;
+  prompt_mode: "normal" | "safe";
+  task_id?: string;
+  status: "generating" | "generated" | "failed";
+  failure_code?: string;
+  failure_message?: string;
+  created_at: string;
+}
 
 const ROLE_META: Record<string, { color: string; bg: string; border: string }> = {
   HOOK:       { color: "#FB923C", bg: "rgba(249,115,22,0.10)", border: "rgba(249,115,22,0.22)" },
@@ -269,6 +322,11 @@ function ProviderCapabilityPanel() {
               <span style={{ color: "#3E3B37", fontSize: 9 }}>
                 Custom res: <span style={{ color: boolColor(cap.supports_custom_resolution) }}>{boolLabel(cap.supports_custom_resolution)}</span>
               </span>
+              {cap.requires_final_composition_to_4_5 && (
+                <span style={{ color: "#3E3B37", fontSize: 9 }}>
+                  Final 4:5 composition: <span style={{ color: "#FB923C" }}>Required</span>
+                </span>
+              )}
             </div>
             <p style={{ color: "#3E3B37", fontSize: 10, lineHeight: 1.55 }}>{cap.notes}</p>
           </div>
@@ -1024,8 +1082,21 @@ export default function FinalLaunchStudioPage() {
   const [slide1KeyframeUrl, setSlide1KeyframeUrl] = useState<string | undefined>(undefined);
   const [slide1KeyframeStatus, setSlide1KeyframeStatus] = useState<"missing" | "generating" | "generated" | "failed">("missing");
   const [slide1MotionStatus, setSlide1MotionStatus] = useState<"missing" | "generating" | "generated" | "failed">("missing");
-  const [slide1MotionError, setSlide1MotionError] = useState<string | undefined>(undefined);
-  const [slide1RatioStatus, setSlide1RatioStatus] = useState<RatioStatus>("unknown");
+  const [slide1MotionError, setSlide1MotionError] = useState<RunwayDiagnostic | undefined>(undefined);
+  const [slide1ProviderRatioStatus, setSlide1ProviderRatioStatus] = useState<ProviderRatioStatus>("unknown");
+  const [slide1ProviderRatioSource, setSlide1ProviderRatioSource] = useState<"metadata" | "declared_runway_request_ratio" | "unknown">("unknown");
+  const [slide1ProviderRatioNote, setSlide1ProviderRatioNote] = useState<string | undefined>(undefined);
+  const [slide1ProviderRatioDims, setSlide1ProviderRatioDims] = useState<{ width: number; height: number } | undefined>(undefined);
+  const [slide1CompositionStatus, setSlide1CompositionStatus] = useState<"missing" | "needed" | "composing" | "composed" | "failed">("missing");
+  const [slide1FinalRatioStatus] = useState<RatioStatus>("unknown"); // updated once final MP4 composition exists
+  const [motionAttempts, setMotionAttempts] = useState<MotionAttempt[]>([]);
+  const attemptCountRef = useRef(0);
+  const [hasSavedAssets, setHasSavedAssets] = useState(false);
+  const [manifestRestoring, setManifestRestoring] = useState(false);
+  const [recoverTaskId, setRecoverTaskId] = useState("019596b5-f932-4c39-a56f-d609f537bf30");
+  const [recoverStatus, setRecoverStatus] = useState<"idle" | "recovering" | "recovered" | "failed">("idle");
+  const [recoverError, setRecoverError] = useState<string | undefined>(undefined);
+  const [recoverDiagnostic, setRecoverDiagnostic] = useState<{ attempted_endpoint?: string; runway_http_status?: number; hint?: string } | undefined>(undefined);
 
   // Still preview pipeline state (debug)
   const [artworks, setArtworks] = useState<SlideArtworkState[]>(() => slides.map(emptyArtwork));
@@ -1156,11 +1227,19 @@ export default function FinalLaunchStudioPage() {
     }
   }, []);
 
-  // Step 2: send keyframe to Runway image-to-video, get motion clip
-  const handleGenerateSlide1Motion = useCallback(async () => {
+  // Step 2: shared motion generation — tracks attempt history, supports normal and safe prompt modes
+  const runSlide1MotionGeneration = useCallback(async (motionPrompt: string, promptMode: "normal" | "safe") => {
     if (!slide1KeyframeUrl) return;
+    attemptCountRef.current += 1;
+    const attemptNumber = attemptCountRef.current;
+    const createdAt = new Date().toISOString();
+
     setSlide1MotionStatus("generating");
     setSlide1MotionError(undefined);
+
+    const newAttempt: MotionAttempt = { attempt_number: attemptNumber, prompt_mode: promptMode, status: "generating", created_at: createdAt };
+    setMotionAttempts((prev) => [newAttempt, ...prev].slice(0, 3));
+
     try {
       const res = await fetch("/api/debug/final-launch/generate-motion-from-keyframe", {
         method: "POST",
@@ -1168,6 +1247,7 @@ export default function FinalLaunchStudioPage() {
         body: JSON.stringify({
           slide_id: "slide-1",
           keyframe_url: slide1KeyframeUrl,
+          motion_prompt: motionPrompt,
           duration_seconds: 5,
         }),
       });
@@ -1175,40 +1255,232 @@ export default function FinalLaunchStudioPage() {
         status: string;
         background_video_url?: string;
         error?: string;
+        task_id?: string;
+        failure_code?: string;
+        failure_message?: string;
+        debug_hint?: string;
       };
       if (data.status === "video_generated" && data.background_video_url) {
         setMotionVideoUrls((prev) => ({ ...prev, 0: data.background_video_url! }));
         setSlide1MotionStatus("generated");
         setSelectedMotionSlide(0);
+        setMotionAttempts((prev) => prev.map((a) => a.attempt_number === attemptNumber ? { ...a, status: "generated", task_id: data.task_id } : a));
       } else {
-        setSlide1MotionError(data.error ?? "Unknown error from Runway");
+        const diagnostic: RunwayDiagnostic = {
+          error: data.error ?? "Unknown error from Runway",
+          task_id: data.task_id,
+          failure_code: data.failure_code,
+          failure_message: data.failure_message,
+          debug_hint: data.debug_hint,
+        };
+        setSlide1MotionError(diagnostic);
         setSlide1MotionStatus("failed");
+        setMotionAttempts((prev) => prev.map((a) => a.attempt_number === attemptNumber ? { ...a, status: "failed", task_id: data.task_id, failure_code: data.failure_code, failure_message: data.failure_message } : a));
       }
     } catch (err) {
-      setSlide1MotionError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setSlide1MotionError({ error: msg });
       setSlide1MotionStatus("failed");
+      setMotionAttempts((prev) => prev.map((a) => a.attempt_number === attemptNumber ? { ...a, status: "failed", failure_message: msg } : a));
     }
   }, [slide1KeyframeUrl]);
 
-  // Detect video ratio via browser metadata — runs whenever slide 1 video URL changes
+  const handleGenerateSlide1Motion = useCallback(() => {
+    return runSlide1MotionGeneration(SLIDE1_MOTION_PROMPT, "normal");
+  }, [runSlide1MotionGeneration]);
+
+  const handleRetrySlide1MotionSafe = useCallback(() => {
+    return runSlide1MotionGeneration(SLIDE1_SAFE_RETRY_PROMPT, "safe");
+  }, [runSlide1MotionGeneration]);
+
+  const handleRegenerateSaferKeyframe = useCallback(async () => {
+    setSlide1KeyframeStatus("generating");
+    setSlide1KeyframeUrl(undefined);
+    setSlide1MotionStatus("missing");
+    setSlide1MotionError(undefined);
+    setSlide1ProviderRatioStatus("unknown");
+    setSlide1CompositionStatus("missing");
+    try {
+      const res = await fetch("/api/debug/final-launch/generate-slide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slide_id: "slide-1",
+          prompt: SLIDE1_SAFER_KEYFRAME_PROMPT,
+          negative_prompt: SLIDE1_SAFER_KEYFRAME_NEGATIVE,
+        }),
+      });
+      const data = (await res.json()) as { status: string; image_url?: string; error?: string };
+      if (data.status === "generated" && data.image_url) {
+        setSlide1KeyframeUrl(data.image_url);
+        setSlide1KeyframeStatus("generated");
+      } else {
+        setSlide1KeyframeStatus("failed");
+      }
+    } catch {
+      setSlide1KeyframeStatus("failed");
+    }
+  }, []);
+
+  // Recover an existing successful Runway task by task ID
+  const handleRecoverRunwayTask = useCallback(async () => {
+    if (!recoverTaskId.trim()) return;
+    setRecoverStatus("recovering");
+    setRecoverError(undefined);
+    try {
+      const res = await fetch("/api/debug/final-launch/recover-runway-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slide_id: "slide-01", task_id: recoverTaskId.trim() }),
+      });
+      const data = (await res.json()) as {
+        status: string;
+        runway_intermediate_video_url?: string;
+        final_composition_status?: string;
+        error?: string;
+        failure_message?: string;
+        attempted_endpoint?: string;
+        runway_http_status?: number;
+        hint?: string;
+      };
+      if (data.status === "recovered" && data.runway_intermediate_video_url) {
+        setMotionVideoUrls((prev) => ({ ...prev, 0: data.runway_intermediate_video_url! }));
+        setSlide1MotionStatus("generated");
+        setSelectedMotionSlide(0);
+        setSlide1CompositionStatus("needed");
+        setHasSavedAssets(true);
+        setRecoverStatus("recovered");
+        setRecoverDiagnostic(undefined);
+      } else {
+        setRecoverError(data.error ?? data.failure_message ?? "Recovery failed.");
+        setRecoverDiagnostic({
+          attempted_endpoint: data.attempted_endpoint,
+          runway_http_status: data.runway_http_status,
+          hint: data.hint,
+        });
+        setRecoverStatus("failed");
+      }
+    } catch (err) {
+      setRecoverError(err instanceof Error ? err.message : String(err));
+      setRecoverStatus("failed");
+    }
+  }, [recoverTaskId]);
+
+  // Restore saved slide assets from manifest on mount
+  const restoreFromManifest = useCallback(async () => {
+    setManifestRestoring(true);
+    try {
+      const res = await fetch("/api/debug/final-launch/manifest");
+      if (!res.ok) return;
+      const data = (await res.json()) as { status: string; manifest?: { slide_01?: { keyframe_url?: string; runway_intermediate_video_url?: string; final_composition_status?: string } } };
+      const slide01 = data.manifest?.slide_01;
+      if (!slide01) { setHasSavedAssets(false); return; }
+      setHasSavedAssets(true);
+      if (slide01.keyframe_url) {
+        setSlide1KeyframeUrl(slide01.keyframe_url);
+        setSlide1KeyframeStatus("generated");
+      }
+      if (slide01.runway_intermediate_video_url) {
+        setMotionVideoUrls((prev) => ({ ...prev, 0: slide01.runway_intermediate_video_url! }));
+        setSlide1MotionStatus("generated");
+        setSelectedMotionSlide(0);
+        if (slide01.final_composition_status === "needed") {
+          setSlide1CompositionStatus("needed");
+        }
+      }
+    } catch {
+      // Manifest fetch failed — non-critical, start fresh
+    } finally {
+      setManifestRestoring(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    restoreFromManifest();
+  }, [restoreFromManifest]);
+
+  const handleClearSavedAssets = useCallback(async () => {
+    try {
+      await fetch("/api/debug/final-launch/manifest", { method: "DELETE" });
+    } catch {
+      // ignore
+    }
+    setHasSavedAssets(false);
+    setSlide1KeyframeUrl(undefined);
+    setSlide1KeyframeStatus("missing");
+    setSlide1MotionStatus("missing");
+    setSlide1MotionError(undefined);
+    setSlide1ProviderRatioStatus("unknown");
+    setSlide1ProviderRatioSource("unknown");
+    setSlide1ProviderRatioNote(undefined);
+    setSlide1ProviderRatioDims(undefined);
+    setSlide1CompositionStatus("missing");
+    setMotionVideoUrls((prev) => { const next = { ...prev }; delete next[0]; return next; });
+    setMotionAttempts([]);
+    attemptCountRef.current = 0;
+  }, []);
+
+  // Validate Runway intermediate output ratio — dual layer:
+  // 1. Browser onLoadedMetadata (dimensions from actual video)
+  // 2. 8-second fallback to declared Runway request ratio (832:1104) if metadata unavailable
   const slide1VideoUrl = motionVideoUrls[0];
   useEffect(() => {
     if (!slide1VideoUrl) {
-      setSlide1RatioStatus("unknown");
+      setSlide1ProviderRatioStatus("unknown");
+      setSlide1ProviderRatioSource("unknown");
+      setSlide1ProviderRatioNote(undefined);
+      setSlide1ProviderRatioDims(undefined);
+      setSlide1CompositionStatus("missing");
       return;
     }
-    setSlide1RatioStatus("unknown");
+
+    setSlide1ProviderRatioStatus("validating");
+    setSlide1ProviderRatioSource("unknown");
+    setSlide1ProviderRatioNote(undefined);
+    setSlide1ProviderRatioDims(undefined);
+
     const video = document.createElement("video");
     video.preload = "metadata";
+    video.crossOrigin = "anonymous";
+
+    const applyDeclaredRatio = () => {
+      // Runway request hardcoded to 832:1104 — use declared ratio as fallback
+      setSlide1ProviderRatioStatus("accepted_intermediate");
+      setSlide1ProviderRatioSource("declared_runway_request_ratio");
+      setSlide1ProviderRatioNote("Video metadata was unavailable, but Runway request used accepted intermediate ratio 832:1104.");
+      setSlide1CompositionStatus("needed");
+    };
+
+    const fallbackTimer = setTimeout(() => {
+      video.src = "";
+      applyDeclaredRatio();
+    }, 8000);
+
     video.onloadedmetadata = () => {
-      setSlide1RatioStatus(validateVideoRatio(video.videoWidth, video.videoHeight));
+      clearTimeout(fallbackTimer);
+      const w = video.videoWidth;
+      const h = video.videoHeight;
       video.src = "";
+      setSlide1ProviderRatioDims({ width: w, height: h });
+      const status = validateProviderRatio(w, h);
+      setSlide1ProviderRatioStatus(status);
+      setSlide1ProviderRatioSource("metadata");
+      setSlide1ProviderRatioNote(undefined);
+      if (status === "accepted_intermediate") setSlide1CompositionStatus("needed");
     };
+
     video.onerror = () => {
-      setSlide1RatioStatus("unknown");
+      clearTimeout(fallbackTimer);
+      video.src = "";
+      applyDeclaredRatio();
+    };
+
+    video.src = slide1VideoUrl;
+
+    return () => {
+      clearTimeout(fallbackTimer);
       video.src = "";
     };
-    video.src = slide1VideoUrl;
   }, [slide1VideoUrl]);
 
   return (
@@ -1267,18 +1539,105 @@ export default function FinalLaunchStudioPage() {
               <p style={{ color: "#3E3B37", fontSize: 11, lineHeight: 1.55 }}>
                 OpenAI generates 4:5 keyframe → Runway animates from keyframe → Phoenix overlays Chinese text
               </p>
+              {/* Restore / Clear saved assets */}
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                {hasSavedAssets && (
+                  <button
+                    onClick={() => restoreFromManifest()}
+                    disabled={manifestRestoring}
+                    style={{ height: 26, padding: "0 10px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#A09D9A", fontSize: 9, fontWeight: 700, cursor: manifestRestoring ? "not-allowed" : "pointer" }}
+                  >
+                    {manifestRestoring ? "Restoring…" : "Restore Saved Slide 1 Assets"}
+                  </button>
+                )}
+                {hasSavedAssets && (
+                  <button
+                    onClick={handleClearSavedAssets}
+                    style={{ height: 26, padding: "0 10px", borderRadius: 6, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.14)", color: "#f87171", fontSize: 9, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    Clear Saved Slide 1 Assets
+                  </button>
+                )}
+              </div>
             </div>
-            {slide1MotionStatus === "generated" && slide1RatioStatus === "passed_4_5" && (
+            {slide1FinalRatioStatus === "passed_4_5" && (
               <span style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.22)", borderRadius: 7, padding: "4px 12px", color: "#4ade80", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", flexShrink: 0, marginTop: 2 }}>
                 SLIDE 1 READY FOR REVIEW
               </span>
             )}
-            {slide1MotionStatus === "generated" && slide1RatioStatus !== "passed_4_5" && (
-              <span style={{ background: "rgba(249,115,22,0.07)", border: "1px solid rgba(249,115,22,0.20)", borderRadius: 7, padding: "4px 12px", color: "#FB923C", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", flexShrink: 0, marginTop: 2 }}>
-                {slide1RatioStatus === "unknown" ? "RATIO UNKNOWN" : "RATIO FAILED"}
+            {slide1MotionStatus === "generated" && slide1ProviderRatioStatus === "accepted_intermediate" && slide1FinalRatioStatus !== "passed_4_5" && (
+              <span style={{ background: "rgba(249,115,22,0.07)", border: "1px solid rgba(249,115,22,0.20)", borderRadius: 7, padding: "4px 10px", color: "#FB923C", fontSize: 8, fontWeight: 700, letterSpacing: "0.06em", flexShrink: 0, marginTop: 2, textAlign: "right" as const, maxWidth: 160 }}>
+                MOTION GENERATED<br />FINAL 4:5 COMPOSITION NEEDED
+              </span>
+            )}
+            {slide1MotionStatus === "generated" && slide1ProviderRatioStatus === "failed" && (
+              <span style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.18)", borderRadius: 7, padding: "4px 10px", color: "#f87171", fontSize: 8, fontWeight: 700, letterSpacing: "0.06em", flexShrink: 0, marginTop: 2 }}>
+                RATIO FAILED
               </span>
             )}
           </div>
+
+          {/* Recover Existing Runway Task — dev-only */}
+          {slide1MotionStatus !== "generated" && (
+            <div style={{ marginBottom: 14, background: "rgba(59,130,246,0.04)", border: "1px solid rgba(59,130,246,0.12)", borderRadius: 10, padding: "12px 14px" }}>
+              <p style={{ color: "#60a5fa", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>
+                Recover Existing Runway Task
+              </p>
+              <p style={{ color: "#3E3B37", fontSize: 10, lineHeight: 1.55, marginBottom: 10 }}>
+                If Runway already succeeded, paste the task ID to download and persist the video without re-generating.
+              </p>
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <input
+                  type="text"
+                  value={recoverTaskId}
+                  onChange={(e) => { setRecoverTaskId(e.target.value); setRecoverStatus("idle"); setRecoverError(undefined); setRecoverDiagnostic(undefined); }}
+                  placeholder="Runway task ID"
+                  style={{ flex: 1, height: 34, borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#A09D9A", fontSize: 11, padding: "0 10px", fontFamily: "monospace", outline: "none" }}
+                />
+                <button
+                  onClick={handleRecoverRunwayTask}
+                  disabled={!recoverTaskId.trim() || recoverStatus === "recovering"}
+                  style={{
+                    height: 34, padding: "0 14px", borderRadius: 8,
+                    background: recoverStatus === "recovering" ? "rgba(255,255,255,0.02)" : "rgba(59,130,246,0.08)",
+                    border: recoverStatus === "recovering" ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(59,130,246,0.22)",
+                    color: recoverStatus === "recovering" ? "#3E3B37" : "#60a5fa",
+                    fontSize: 11, fontWeight: 700,
+                    cursor: recoverStatus === "recovering" ? "not-allowed" : "pointer",
+                    flexShrink: 0,
+                  }}
+                >
+                  {recoverStatus === "recovering" ? "Recovering…" : "Recover"}
+                </button>
+              </div>
+              {recoverStatus === "recovered" && (
+                <p style={{ color: "#4ade80", fontSize: 10, fontWeight: 700 }}>✓ Runway task recovered — video saved locally and manifest updated.</p>
+              )}
+              {recoverStatus === "failed" && recoverError && (
+                <div style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 8, padding: "10px 12px" }}>
+                  <p style={{ color: "#f87171", fontSize: 10, fontWeight: 700, marginBottom: 6 }}>✗ Recovery failed</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <p style={{ color: "#52504E", fontSize: 10, lineHeight: 1.55 }}>{recoverError}</p>
+                    {recoverDiagnostic?.runway_http_status && (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <span style={{ color: "#3E3B37", fontSize: 9, fontWeight: 600, flexShrink: 0 }}>HTTP Status</span>
+                        <span style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace" }}>{recoverDiagnostic.runway_http_status}</span>
+                      </div>
+                    )}
+                    {recoverDiagnostic?.attempted_endpoint && (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <span style={{ color: "#3E3B37", fontSize: 9, fontWeight: 600, flexShrink: 0 }}>Endpoint</span>
+                        <span style={{ color: "#A09D9A", fontSize: 9, fontFamily: "monospace" }}>{recoverDiagnostic.attempted_endpoint}</span>
+                      </div>
+                    )}
+                    {recoverDiagnostic?.hint && (
+                      <p style={{ color: "#6B6865", fontSize: 9, lineHeight: 1.6, marginTop: 2 }}>{recoverDiagnostic.hint}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Step 1 — Keyframe */}
           <div style={{ marginBottom: 14 }}>
@@ -1347,44 +1706,196 @@ export default function FinalLaunchStudioPage() {
             )}
 
             {slide1MotionStatus === "failed" && slide1MotionError && (
-              <div style={{ marginTop: 10, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 10, padding: "10px 14px" }}>
-                <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 3 }}>Motion generation failed</p>
-                <p style={{ color: "#52504E", fontSize: 11, lineHeight: 1.6 }}>{slide1MotionError}</p>
+              <div style={{ marginTop: 10, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 10, padding: "14px 16px" }}>
+                <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Motion generation failed</p>
+
+                {/* Diagnostic rows */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+                  {slide1MotionError.task_id && (
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ color: "#3E3B37", fontSize: 10, fontWeight: 600, flexShrink: 0 }}>Task ID</span>
+                      <span style={{ color: "#A09D9A", fontSize: 10, fontFamily: "monospace", wordBreak: "break-all" as const, textAlign: "right" as const }}>{slide1MotionError.task_id}</span>
+                    </div>
+                  )}
+                  {slide1MotionError.failure_code && (
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ color: "#3E3B37", fontSize: 10, fontWeight: 600, flexShrink: 0 }}>Failure Code</span>
+                      <span style={{ color: "#f87171", fontSize: 10, fontFamily: "monospace" }}>{slide1MotionError.failure_code}</span>
+                    </div>
+                  )}
+                  {slide1MotionError.failure_message && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <span style={{ color: "#3E3B37", fontSize: 10, fontWeight: 600 }}>Failure Message</span>
+                      <span style={{ color: "#52504E", fontSize: 10, lineHeight: 1.55 }}>{slide1MotionError.failure_message}</span>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ color: "#3E3B37", fontSize: 10, fontWeight: 600 }}>Error</span>
+                    <span style={{ color: "#52504E", fontSize: 10, lineHeight: 1.55 }}>{slide1MotionError.error}</span>
+                  </div>
+                </div>
+
+                {/* BAD_OUTPUT-specific hint */}
+                {slide1MotionError.failure_code?.includes("INTERNAL.BAD_OUTPUT") && (
+                  <div style={{ background: "rgba(249,115,22,0.05)", border: "1px solid rgba(249,115,22,0.15)", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+                    <p style={{ color: "#FB923C", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>Runway Internal Output Quality Rejection</p>
+                    <p style={{ color: "#6B6865", fontSize: 10, lineHeight: 1.6 }}>
+                      Runway rejected this generation for internal output quality. Try Safe Prompt or regenerate a safer keyframe before retrying. Do not repeatedly retry the exact same input.
+                    </p>
+                  </div>
+                )}
+
+                {/* Dashboard hint */}
+                <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+                  <p style={{ color: "#6B6865", fontSize: 10, lineHeight: 1.6 }}>
+                    {slide1MotionError.debug_hint ?? "Check Runway Dashboard → Request History for this task ID."}
+                    {slide1MotionError.task_id && (
+                      <span style={{ display: "block", color: "#3E3B37", fontFamily: "monospace", fontSize: 9, marginTop: 3 }}>
+                        Task: {slide1MotionError.task_id}
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                {/* Recovery actions */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <button
+                    onClick={handleRetrySlide1MotionSafe}
+                    style={{
+                      width: "100%", height: 36, borderRadius: 8,
+                      background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.22)",
+                      color: "#FB923C", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    }}
+                  >
+                    Retry Motion with Safe Prompt
+                  </button>
+                  <button
+                    onClick={handleRegenerateSaferKeyframe}
+                    disabled={slide1KeyframeStatus !== "generated"}
+                    style={{
+                      width: "100%", height: 36, borderRadius: 8,
+                      background: slide1KeyframeStatus !== "generated" ? "rgba(255,255,255,0.01)" : "rgba(255,255,255,0.04)",
+                      border: slide1KeyframeStatus !== "generated" ? "1px solid rgba(255,255,255,0.04)" : "1px solid rgba(255,255,255,0.1)",
+                      color: slide1KeyframeStatus !== "generated" ? "#1A1816" : "#A09D9A",
+                      fontSize: 11, fontWeight: 700,
+                      cursor: slide1KeyframeStatus !== "generated" ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    Regenerate Safer Keyframe
+                  </button>
+                  <CopyButton text={SLIDE1_SAFE_RETRY_PROMPT} label="Copy Safe Retry Prompt" />
+                </div>
               </div>
             )}
           </div>
 
-          {/* Step 3 — Ratio Validation (shown once video exists) */}
+          {/* Attempt History — client state only, last 3 attempts */}
+          {motionAttempts.length > 0 && (
+            <div style={{ marginTop: 14, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 10, padding: "12px 14px" }}>
+              <p style={{ color: "#3E3B37", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
+                Attempt History (last {motionAttempts.length})
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {motionAttempts.map((a) => (
+                  <div key={a.attempt_number} style={{ display: "flex", flexDirection: "column", gap: 3, background: "rgba(255,255,255,0.015)", borderRadius: 7, padding: "8px 10px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ color: "#52504E", fontSize: 10, fontWeight: 600 }}>#{a.attempt_number} — {a.prompt_mode === "safe" ? "Safe Prompt" : "Normal Prompt"}</span>
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 4,
+                        background: a.status === "generated" ? "rgba(34,197,94,0.08)" : a.status === "failed" ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.04)",
+                        color: a.status === "generated" ? "#4ade80" : a.status === "failed" ? "#f87171" : "#3E3B37",
+                        border: `1px solid ${a.status === "generated" ? "rgba(34,197,94,0.2)" : a.status === "failed" ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.08)"}`,
+                      }}>
+                        {a.status}
+                      </span>
+                    </div>
+                    {a.task_id && (
+                      <span style={{ color: "#3E3B37", fontSize: 9, fontFamily: "monospace" }}>task: {a.task_id}</span>
+                    )}
+                    {a.failure_code && (
+                      <span style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace" }}>{a.failure_code}</span>
+                    )}
+                    <span style={{ color: "#252220", fontSize: 9 }}>{new Date(a.created_at).toLocaleTimeString()}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 3 — Provider Ratio Validation */}
           {slide1MotionStatus === "generated" && (
             <div style={{ marginTop: 14, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10, padding: "12px 14px" }}>
               <p style={{ color: "#6B6865", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
-                Step 3 — Ratio Validation (browser onLoadedMetadata)
+                Step 3 — Provider Ratio Validation
               </p>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <span style={{
-                  background: slide1RatioStatus === "passed_4_5" ? "rgba(34,197,94,0.08)" : slide1RatioStatus === "failed" ? "rgba(239,68,68,0.08)" : "rgba(249,115,22,0.08)",
-                  border: `1px solid ${slide1RatioStatus === "passed_4_5" ? "rgba(34,197,94,0.2)" : slide1RatioStatus === "failed" ? "rgba(239,68,68,0.2)" : "rgba(249,115,22,0.2)"}`,
-                  borderRadius: 6, padding: "3px 10px",
-                  color: slide1RatioStatus === "passed_4_5" ? "#4ade80" : slide1RatioStatus === "failed" ? "#f87171" : "#FB923C",
-                  fontSize: 10, fontWeight: 700,
-                }}>
-                  {slide1RatioStatus === "passed_4_5" ? "✓ Ratio 4:5 — passed" : slide1RatioStatus === "failed" ? "✗ Ratio failed — not 4:5" : "⋯ Validating ratio…"}
-                </span>
-              </div>
-              {slide1RatioStatus === "failed" && (
+              <span style={{
+                display: "inline-block",
+                background: slide1ProviderRatioStatus === "accepted_intermediate" ? "rgba(249,115,22,0.08)" : slide1ProviderRatioStatus === "failed" ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.04)",
+                border: `1px solid ${slide1ProviderRatioStatus === "accepted_intermediate" ? "rgba(249,115,22,0.2)" : slide1ProviderRatioStatus === "failed" ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.08)"}`,
+                borderRadius: 6, padding: "3px 10px",
+                color: slide1ProviderRatioStatus === "accepted_intermediate" ? "#FB923C" : slide1ProviderRatioStatus === "failed" ? "#f87171" : "#3E3B37",
+                fontSize: 10, fontWeight: 700,
+              }}>
+                {slide1ProviderRatioStatus === "accepted_intermediate"
+                  ? "✓ accepted intermediate ratio"
+                  : slide1ProviderRatioStatus === "failed"
+                  ? "✗ Provider ratio failed — not an accepted portrait ratio"
+                  : slide1ProviderRatioStatus === "validating"
+                  ? "⋯ Validating provider ratio…"
+                  : "⋯ Awaiting video metadata"}
+              </span>
+
+              {slide1ProviderRatioStatus === "accepted_intermediate" && (
+                <div style={{ marginTop: 8 }}>
+                  {slide1ProviderRatioDims && (
+                    <p style={{ color: "#52504E", fontSize: 9, fontFamily: "monospace", marginBottom: 4 }}>
+                      Detected: {slide1ProviderRatioDims.width}×{slide1ProviderRatioDims.height} · source: metadata
+                    </p>
+                  )}
+                  {slide1ProviderRatioNote && (
+                    <p style={{ color: "#52504E", fontSize: 9, lineHeight: 1.55, marginBottom: 4 }}>
+                      source: declared_runway_request_ratio — {slide1ProviderRatioNote}
+                    </p>
+                  )}
+                  <p style={{ color: "#FB923C", fontSize: 10, lineHeight: 1.55 }}>
+                    Accepted intermediate ratio from Runway request: 832:1104. Final 1080×1350 4:5 composition is still required.
+                  </p>
+                </div>
+              )}
+
+              {slide1ProviderRatioStatus === "failed" && (
                 <p style={{ color: "#f87171", fontSize: 10, marginTop: 8, lineHeight: 1.55 }}>
-                  This video is not 4:5 and cannot be used as final motion background. Provider output must be re-evaluated.
+                  Provider output ratio is not an accepted intermediate portrait ratio. Cannot proceed to final composition.
                 </p>
               )}
-              {slide1RatioStatus === "unknown" && (
+
+              {slide1ProviderRatioStatus === "validating" && (
                 <p style={{ color: "#3E3B37", fontSize: 10, marginTop: 8, lineHeight: 1.55 }}>
-                  Video ratio has not been validated yet. Load the video to measure dimensions.
+                  Reading video metadata… Fallback to declared Runway ratio in 8 seconds if unavailable.
                 </p>
               )}
             </div>
           )}
 
-          {/* Pipeline status summary */}
+          {/* Step 4 — Final 4:5 Composition */}
+          {slide1ProviderRatioStatus === "accepted_intermediate" && (
+            <div style={{ marginTop: 14, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(249,115,22,0.12)", borderRadius: 10, padding: "12px 14px" }}>
+              <p style={{ color: "#FB923C", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
+                Step 4 — Final 4:5 Composition (1080×1350)
+              </p>
+              <p style={{ color: "#52504E", fontSize: 11, lineHeight: 1.65, marginBottom: 10 }}>
+                Runway intermediate motion generated. Final 1080×1350 composition is still required — compose the Runway clip into a 4:5 MP4 before this slide can be marked ready.
+              </p>
+              <button disabled style={{ width: "100%", height: 38, borderRadius: 10, background: "rgba(255,255,255,0.01)", border: "1px solid rgba(255,255,255,0.05)", color: "#252220", fontSize: 11, fontWeight: 700, cursor: "not-allowed" }}>
+                Compose Final 4:5 MP4 — Not yet implemented
+              </button>
+              <p style={{ color: "#252220", fontSize: 9, marginTop: 6 }}>
+                Final composition status: <span style={{ color: slide1CompositionStatus === "composed" ? "#4ade80" : "#FB923C" }}>{slide1CompositionStatus}</span>
+              </p>
+            </div>
+          )}
+
+          {/* Pipeline status summary — 5 rows */}
           <div style={{ marginTop: 14, background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10, padding: "10px 14px" }}>
             <p style={{ color: "#252220", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 8 }}>Slide 1 Pipeline Status</p>
             {(
@@ -1396,16 +1907,28 @@ export default function FinalLaunchStudioPage() {
                   fail: slide1KeyframeStatus === "failed",
                 },
                 {
-                  label: "Motion",
+                  label: "Runway Motion",
                   value: slide1MotionStatus === "generated" ? "generated" : slide1MotionStatus === "generating" ? "generating" : slide1MotionStatus === "failed" ? "failed" : "missing",
                   pass: slide1MotionStatus === "generated",
                   fail: slide1MotionStatus === "failed",
                 },
                 {
-                  label: "Ratio",
-                  value: slide1RatioStatus === "passed_4_5" ? "passed 4:5" : slide1RatioStatus === "failed" ? "failed — not 4:5" : "unknown",
-                  pass: slide1RatioStatus === "passed_4_5",
-                  fail: slide1RatioStatus === "failed",
+                  label: "Provider Ratio",
+                  value: slide1ProviderRatioStatus === "accepted_intermediate" ? "accepted intermediate" : slide1ProviderRatioStatus === "failed" ? "failed" : slide1ProviderRatioStatus === "validating" ? "validating" : "unknown",
+                  pass: slide1ProviderRatioStatus === "accepted_intermediate",
+                  fail: slide1ProviderRatioStatus === "failed",
+                },
+                {
+                  label: "Final Composition",
+                  value: slide1CompositionStatus,
+                  pass: slide1CompositionStatus === "composed",
+                  fail: slide1CompositionStatus === "failed",
+                },
+                {
+                  label: "Final Ratio",
+                  value: slide1FinalRatioStatus === "passed_4_5" ? "passed 4:5" : slide1FinalRatioStatus === "failed" ? "failed" : "unknown",
+                  pass: slide1FinalRatioStatus === "passed_4_5",
+                  fail: slide1FinalRatioStatus === "failed",
                 },
               ] as { label: string; value: string; pass: boolean; fail: boolean }[]
             ).map((row) => (
@@ -1415,7 +1938,7 @@ export default function FinalLaunchStudioPage() {
               </div>
             ))}
             <p style={{ color: "#252220", fontSize: 9, marginTop: 2 }}>
-              All 3 must pass · Ratio passed_4_5 required · 8/8 slides needed for Motion Gate
+              Final Ratio passed_4_5 required for READY FOR REVIEW · 8/8 slides needed for Motion Gate
             </p>
           </div>
 
@@ -1423,7 +1946,7 @@ export default function FinalLaunchStudioPage() {
           <div style={{ marginTop: 10, background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.10)", borderRadius: 8, padding: "8px 12px" }}>
             <p style={{ color: "#f87171", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", marginBottom: 2 }}>MOTION NOT READY — 1/8 SLIDES</p>
             <p style={{ color: "#52504E", fontSize: 10, lineHeight: 1.55 }}>
-              Slide 1 is the first-frame motion spike. All 8 slides must be generated and ratio-validated before Motion Gate clears.
+              Runway outputs intermediate 832:1104 — final 4:5 composition is still needed. All 8 slides must complete the full pipeline before Motion Gate clears.
             </p>
           </div>
         </div>

@@ -9,7 +9,9 @@ import path from "path";
 import {
   isRunwayConfigured,
   generateRunwayVideoFromKeyframe,
+  RunwayFailureError,
 } from "@/lib/launch/providers/runway-provider";
+import { updateSlide01, GENERATED_DIR } from "@/lib/launch/manifest";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -92,14 +94,63 @@ export async function POST(req: NextRequest) {
       durationSeconds: safeSeconds,
     });
 
+    // Persist Runway intermediate video locally so it survives page refresh
+    let localVideoUrl = video_url;
+    if (slide_id === "slide-1") {
+      try {
+        const videoRes = await fetch(video_url);
+        if (videoRes.ok) {
+          const buffer = Buffer.from(await videoRes.arrayBuffer());
+          await fs.mkdir(GENERATED_DIR, { recursive: true });
+          const localFilename = "slide-01-runway-intermediate.mp4";
+          await fs.writeFile(path.join(GENERATED_DIR, localFilename), buffer);
+          localVideoUrl = `/generated/final-launch-pack/${localFilename}`;
+          await updateSlide01({
+            runway_intermediate_video_url: localVideoUrl,
+            provider_ratio_status: "accepted_intermediate",
+            provider_ratio_source: "declared_runway_request_ratio",
+            final_composition_status: "needed",
+            final_ratio_status: "unknown",
+          });
+          console.log("[generate-motion-from-keyframe] video persisted locally:", localVideoUrl);
+        }
+      } catch (persistErr) {
+        console.warn("[generate-motion-from-keyframe] video persist failed (non-critical), returning Runway URL:", persistErr);
+      }
+    }
+
     return NextResponse.json({
       slide_id,
       status: "video_generated",
       provider: "runway",
-      background_video_url: video_url,
+      background_video_url: localVideoUrl,
       generated_at,
     });
   } catch (err) {
+    if (err instanceof RunwayFailureError) {
+      // Structured diagnostic — no secrets, no auth headers
+      console.error(`[generate-motion-from-keyframe] RunwayFailureError`, {
+        slide_id,
+        taskId: err.taskId,
+        runwayStatus: err.runwayStatus,
+        failureCode: err.failureCode,
+        failureMessage: err.failureMessage,
+      });
+      return NextResponse.json(
+        {
+          slide_id,
+          status: "failed",
+          provider: "runway",
+          task_id: err.taskId,
+          runway_status: err.runwayStatus,
+          failure_code: err.failureCode ?? "unknown",
+          failure_message: err.failureMessage ?? "An unexpected error occurred.",
+          error: err.message,
+          debug_hint: "Check Runway Dashboard → Request History for this task ID.",
+        },
+        { status: 500 }
+      );
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[generate-motion-from-keyframe] ${slide_id}:`, msg);
     return NextResponse.json({ slide_id, status: "failed", error: msg }, { status: 500 });

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import fs from "fs/promises";
+import path from "path";
 import { generateImageBackground } from "@/lib/launch/openai-image";
+import { updateSlide01, GENERATED_DIR } from "@/lib/launch/manifest";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -46,6 +49,18 @@ export async function POST(req: NextRequest) {
       slideId: slide_id,
       prompt: fullPrompt,
     });
+
+    // Persist keyframe for slide-1 — copy to canonical filename and update manifest
+    if (slide_id === "slide-1") {
+      try {
+        const sourcePath = path.join(GENERATED_DIR, `${slide_id}-background.png`);
+        const canonicalPath = path.join(GENERATED_DIR, "slide-01-keyframe.png");
+        await fs.copyFile(sourcePath, canonicalPath);
+        await updateSlide01({ keyframe_url: "/generated/final-launch-pack/slide-01-keyframe.png" });
+      } catch (manifestErr) {
+        console.warn("[generate-slide] manifest update failed (non-critical):", manifestErr);
+      }
+    }
 
     return NextResponse.json({
       slide_id,

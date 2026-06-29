@@ -8,8 +8,10 @@ const POLL_INTERVAL_MS = 5_000;
 const MAX_POLL_ATTEMPTS = 36; // 3-minute ceiling
 
 // Text-to-video uses 9:16 (768×1280) — Runway's closest portrait ratio to 4:5.
-// The output ratio must be validated after generation; do not assume it matches 4:5.
 const RUNWAY_PORTRAIT_RATIO = "768:1280";
+// Image-to-video uses 832:1104 — the accepted portrait ratio closest to 4:5 in Runway's allowed list.
+// Neither ratio is native 4:5; final 4:5 composition (1080×1350) is always required after Runway.
+const RUNWAY_IMG2VID_RATIO = "832:1104";
 
 type RunwayTaskStatus =
   | "PENDING"
@@ -30,6 +32,21 @@ interface RunwayTask {
 
 export function isRunwayConfigured(): boolean {
   return Boolean(process.env.RUNWAY_API_KEY);
+}
+
+// Structured error thrown when Runway reports FAILED/CANCELLED — carries full diagnostic payload.
+// Never includes API key or auth headers.
+export class RunwayFailureError extends Error {
+  constructor(
+    message: string,
+    public readonly taskId: string,
+    public readonly runwayStatus: string,
+    public readonly failureCode: string | undefined,
+    public readonly failureMessage: string | undefined,
+  ) {
+    super(message);
+    this.name = "RunwayFailureError";
+  }
 }
 
 function makeHeaders(apiKey: string): Record<string, string> {
@@ -55,7 +72,16 @@ async function pollTask(
     }
 
     const task = (await pollRes.json()) as RunwayTask;
-    console.log(`[runway][${label}] poll ${attempt + 1}: status=${task.status} progress=${task.progress ?? "?"}%`);
+    // Safe log — no secrets, no base64 image data
+    console.log("[Runway task status]", {
+      taskId,
+      label,
+      attempt: attempt + 1,
+      status: task.status,
+      progress: task.progress ?? "?",
+      failureCode: task.failureCode,
+      failureMessage: task.failure,
+    });
 
     if (task.status === "SUCCEEDED") {
       const videoUrl = task.output?.[0];
@@ -64,7 +90,13 @@ async function pollTask(
     }
 
     if (task.status === "FAILED" || task.status === "CANCELLED") {
-      throw new Error(`Runway task ${task.status}: ${task.failure ?? task.failureCode ?? "no details"}`);
+      throw new RunwayFailureError(
+        `Runway task ${task.status}: ${task.failure ?? task.failureCode ?? "An unexpected error occurred."}`,
+        taskId,
+        task.status,
+        task.failureCode,
+        task.failure,
+      );
     }
   }
 
@@ -137,7 +169,7 @@ export async function generateRunwayVideoFromKeyframe({
   const createRes = await fetch(`${RUNWAY_API_BASE}/image_to_video`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ promptImage: keyframeDataUri, promptText: prompt, model, duration }),
+    body: JSON.stringify({ promptImage: keyframeDataUri, promptText: prompt, model, ratio: RUNWAY_IMG2VID_RATIO, duration }),
   });
 
   if (!createRes.ok) {
@@ -146,7 +178,8 @@ export async function generateRunwayVideoFromKeyframe({
   }
 
   const { id: taskId } = (await createRes.json()) as { id: string };
-  console.log(`[runway][img2vid] task created: ${taskId}`);
+  // Safe log — no key, no base64 image
+  console.log("[Runway task created]", { taskId, model, ratio: RUNWAY_IMG2VID_RATIO, slideId });
 
   const videoUrl = await pollTask(taskId, headers, "img2vid");
   return { video_url: videoUrl, generated_at: new Date().toISOString() };
