@@ -73,6 +73,8 @@ export default function DailyRunsDebugPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [cronPending, setCronPending] = useState<"ideas" | "generate" | "publish" | null>(null);
+  const [cronResult, setCronResult] = useState<{ job_type: string; status: string; message: string } | null>(null);
 
   const fetchDetails = useCallback(async (runId: string) => {
     try {
@@ -147,6 +149,29 @@ export default function DailyRunsDebugPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActionPending(false);
+    }
+  };
+
+  const handleTestCron = async (type: "ideas" | "generate" | "publish") => {
+    setCronPending(type);
+    setCronResult(null);
+    const path =
+      type === "ideas" ? "/api/cron/daily-ideas"
+      : type === "generate" ? "/api/cron/daily-generate"
+      : "/api/cron/daily-publish";
+    try {
+      const res = await fetch(path);
+      const data = (await res.json()) as { job_type?: string; status?: string; message?: string };
+      setCronResult({
+        job_type: data.job_type ?? type,
+        status: data.status ?? (res.ok ? "ok" : "error"),
+        message: data.message ?? "",
+      });
+      await fetchToday();
+    } catch (err) {
+      setCronResult({ job_type: type, status: "error", message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setCronPending(null);
     }
   };
 
@@ -357,6 +382,46 @@ export default function DailyRunsDebugPage() {
             </SectionCard>
           </>
         )}
+
+        {/* Cron Test Panel */}
+        <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 18px", marginTop: 24 }}>
+          <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Cron Test Panel</p>
+          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 14 }}>Debug only. This does not call OpenAI, LINE, Runway, or Instagram.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(
+              [
+                { type: "ideas" as const, label: "測試 03:00 主題候選 Cron", path: "/api/cron/daily-ideas" },
+                { type: "generate" as const, label: "測試 17:00 生成 Cron", path: "/api/cron/daily-generate" },
+                { type: "publish" as const, label: "測試 20:00 發布 Cron", path: "/api/cron/daily-publish" },
+              ] as const
+            ).map(({ type, label }) => (
+              <button
+                key={type}
+                onClick={() => handleTestCron(type)}
+                disabled={cronPending !== null}
+                style={{
+                  height: 38, paddingLeft: 16, paddingRight: 16, borderRadius: 9,
+                  background: cronPending === type ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  color: cronPending === type ? "#9B9387" : "#CFC7BA",
+                  fontSize: 12, fontWeight: 600, cursor: cronPending !== null ? "not-allowed" : "pointer",
+                  textAlign: "left",
+                }}
+              >
+                {cronPending === type ? "執行中…" : label}
+              </button>
+            ))}
+          </div>
+          {cronResult && (
+            <div style={{ marginTop: 12, padding: "10px 12px", background: cronResult.status === "error" ? "rgba(239,68,68,0.06)" : "rgba(74,222,128,0.05)", border: `1px solid ${cronResult.status === "error" ? "rgba(239,68,68,0.20)" : "rgba(74,222,128,0.15)"}`, borderRadius: 9 }}>
+              <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>{cronResult.job_type}</p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <StatusBadge status={cronResult.status} />
+                {cronResult.message && <span style={{ color: "#CFC7BA", fontSize: 11 }}>{cronResult.message}</span>}
+              </div>
+            </div>
+          )}
+        </div>
 
         <p style={{ color: "#6F675E", fontSize: 9, textAlign: "center", marginTop: 24 }}>
           Debug only · Not available in production · No IG · No LINE · No auto-publish

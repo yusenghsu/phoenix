@@ -3,6 +3,18 @@
     {
       "path": "/api/cron/daily-decision",
       "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/cron/daily-ideas",
+      "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/cron/daily-generate",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/daily-publish",
+      "schedule": "0 12 * * *"
     }
   ]
 }
