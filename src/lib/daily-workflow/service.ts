@@ -105,6 +105,31 @@ export async function updateRunStatus(
   return data as DailyRun;
 }
 
+// ── Force reset for debug regeneration ───────────────────────────────────────
+
+export async function deleteRunCandidates(runId: string): Promise<number> {
+  const db = requireClient();
+  const { data, error } = await db
+    .from("phoenix_topic_candidates")
+    .delete()
+    .eq("run_id", runId)
+    .select("id");
+  if (error) throw new Error(`Failed to delete candidates: ${error.message}`);
+  return data?.length ?? 0;
+}
+
+export async function forceResetRunForRegeneration(runId: string): Promise<DailyRun> {
+  const db = requireClient();
+  const { data, error } = await db
+    .from("phoenix_daily_runs")
+    .update({ selected_topic_id: null, status: "idle", updated_at: new Date().toISOString() })
+    .eq("id", runId)
+    .select()
+    .single();
+  if (error || !data) throw new Error(`Failed to reset run: ${error?.message}`);
+  return data as DailyRun;
+}
+
 // ── Topic Candidates ──────────────────────────────────────────────────────────
 
 export async function createTopicCandidates(

@@ -74,7 +74,8 @@ export default function DailyRunsDebugPage() {
   const [actionPending, setActionPending] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [selectingTopicId, setSelectingTopicId] = useState<string | null>(null);
-  const [cronPending, setCronPending] = useState<"ideas" | "generate" | "publish" | null>(null);
+  const [cronPending, setCronPending] = useState<"ideas" | "generate" | "publish" | "force_ideas" | null>(null);
+  const [confirmForceRegen, setConfirmForceRegen] = useState(false);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -201,14 +202,14 @@ export default function DailyRunsDebugPage() {
     }
   };
 
-  const handleTestCron = async (type: "ideas" | "generate" | "publish") => {
-    setCronPending(type);
+  const handleTestCron = async (type: "ideas" | "generate" | "publish", force = false) => {
+    setCronPending(force ? "force_ideas" : type);
     setCronResult(null);
     try {
       const res = await fetch("/api/debug/cron-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type }),
+        body: JSON.stringify({ type, force }),
       });
       const data = (await res.json()) as {
         ok?: boolean;
@@ -516,13 +517,13 @@ export default function DailyRunsDebugPage() {
         {/* Cron Test Panel */}
         <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 18px", marginTop: 24 }}>
           <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Cron Test Panel</p>
-          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 14 }}>Debug only. This does not call OpenAI, LINE, Runway, or Instagram.</p>
+          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 14 }}>Debug only. Calls OpenAI for 03:00 ideas. Does not call LINE, Runway, or Instagram.</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {(
               [
-                { type: "ideas" as const, label: "測試 03:00 主題候選 Cron", path: "/api/cron/daily-ideas" },
-                { type: "generate" as const, label: "測試 17:00 生成 Cron", path: "/api/cron/daily-generate" },
-                { type: "publish" as const, label: "測試 20:00 發布 Cron", path: "/api/cron/daily-publish" },
+                { type: "ideas" as const, label: "測試 03:00 主題候選 Cron" },
+                { type: "generate" as const, label: "測試 17:00 生成 Cron" },
+                { type: "publish" as const, label: "測試 20:00 發布 Cron" },
               ] as const
             ).map(({ type, label }) => (
               <button
@@ -541,6 +542,52 @@ export default function DailyRunsDebugPage() {
                 {cronPending === type ? "執行中…" : label}
               </button>
             ))}
+
+            {/* Force regenerate — with 2nd confirm */}
+            <div style={{ marginTop: 4, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              {!confirmForceRegen ? (
+                <button
+                  onClick={() => setConfirmForceRegen(true)}
+                  disabled={cronPending !== null}
+                  style={{
+                    height: 34, paddingLeft: 14, paddingRight: 14, borderRadius: 8,
+                    background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.14)",
+                    color: "#f87171", fontSize: 11, fontWeight: 600,
+                    cursor: cronPending !== null ? "not-allowed" : "pointer", textAlign: "left",
+                  }}
+                >
+                  重新產生今日 5 個主題候選（Debug）
+                </button>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <p style={{ color: "#f87171", fontSize: 10 }}>⚠ 會刪除今日候選並重新產生（消耗 OpenAI token）。是否確認？</p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() => { handleTestCron("ideas", true); setConfirmForceRegen(false); }}
+                      disabled={cronPending !== null}
+                      style={{
+                        height: 34, paddingLeft: 14, paddingRight: 14, borderRadius: 8,
+                        background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.30)",
+                        color: "#f87171", fontSize: 11, fontWeight: 700,
+                        cursor: cronPending !== null ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {cronPending === "force_ideas" ? "重新產生中…" : "確認重新產生"}
+                    </button>
+                    <button
+                      onClick={() => setConfirmForceRegen(false)}
+                      style={{
+                        height: 34, paddingLeft: 14, paddingRight: 14, borderRadius: 8,
+                        background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
+                        color: "#9B9387", fontSize: 11, cursor: "pointer",
+                      }}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           {cronResult && (
             <div style={{ marginTop: 12, padding: "10px 12px", background: cronResult.ok === false ? "rgba(239,68,68,0.06)" : "rgba(74,222,128,0.05)", border: `1px solid ${cronResult.ok === false ? "rgba(239,68,68,0.20)" : "rgba(74,222,128,0.15)"}`, borderRadius: 9, display: "flex", flexDirection: "column", gap: 5 }}>

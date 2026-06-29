@@ -8,6 +8,8 @@ import {
   createTopicCandidates,
   createPublishJob,
   logJobEvent,
+  deleteRunCandidates,
+  forceResetRunForRegeneration,
 } from "./service";
 import { getTaiwanRunDate, logCronTriggered } from "./cron";
 import { getDailyMarketSignals } from "./market-signals";
@@ -60,16 +62,17 @@ function buildError(opts: {
 }
 
 // ── daily-ideas ───────────────────────────────────────────────────────────────
-// Generates 5 topic candidates via OpenAI then waits for selection.
+// Generates 5 topic candidates via OpenAI (or demo fallback) then waits for selection.
 // No LINE, no Runway, no images, no Instagram.
+// force=true: deletes existing candidates + resets run to idle before regenerating.
 
-export async function runDailyIdeas(devMode: boolean): Promise<CronRunResult> {
+export async function runDailyIdeas(devMode: boolean, force = false): Promise<CronRunResult> {
   const runDate = getTaiwanRunDate();
   let runId: string | undefined;
   let stage = "get_or_create_run";
 
   try {
-    const run = await getOrCreateDailyRun(runDate);
+    let run = await getOrCreateDailyRun(runDate);
     runId = run.id;
 
     stage = "log_triggered_event";
@@ -77,11 +80,26 @@ export async function runDailyIdeas(devMode: boolean): Promise<CronRunResult> {
       runId: run.id,
       jobType: "daily_ideas",
       status: "triggered",
-      message: "03:00 daily ideas cron triggered",
-      payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status },
+      message: force ? "daily ideas cron triggered (force regenerate)" : "03:00 daily ideas cron triggered",
+      payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status, force },
     });
 
-    // Non-idle status — skip unless we need to re-enter waiting state
+    // Force: delete existing candidates + reset run to idle
+    if (force) {
+      stage = "force_delete_candidates";
+      const deleted = await deleteRunCandidates(run.id);
+      stage = "force_reset_run";
+      run = await forceResetRunForRegeneration(run.id);
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_ideas",
+        status: "force_regenerated",
+        message: `Force regenerate: deleted ${deleted} existing candidates, run reset to idle`,
+        payload: { run_date: runDate, deleted_count: deleted },
+      });
+    }
+
+    // Non-idle status — skip
     if (run.status !== "idle") {
       await logCronTriggered({
         runId: run.id,
@@ -102,7 +120,7 @@ export async function runDailyIdeas(devMode: boolean): Promise<CronRunResult> {
       };
     }
 
-    // Check for existing candidates (avoid re-burning OpenAI)
+    // Check for existing candidates (avoid re-burning OpenAI without force)
     stage = "check_existing_candidates";
     const db = createServerClient();
     if (db) {
@@ -156,15 +174,15 @@ export async function runDailyIdeas(devMode: boolean): Promise<CronRunResult> {
       payload: { run_date: runDate, source: marketSignals.source },
     });
 
-    // Advance to ideas_generating before calling OpenAI
+    // Advance to ideas_generating
     stage = "update_status_ideas_generating";
     await updateRunStatus(run.id, "ideas_generating", {
       cron_triggered_at: new Date().toISOString(),
     });
 
-    // Call OpenAI — this is the main generation step
+    // Generate candidates (OpenAI or demo fallback — never throws)
     stage = "generate_candidates";
-    const candidates = await generateDailyTopicCandidates({
+    const result = await generateDailyTopicCandidates({
       runDate,
       profileKey: run.profile_key,
       brandRole: brandProfile?.role ?? "保險業務訓練者 / 富邦人壽訓練組長 / 保險業內容創作者",
@@ -182,15 +200,25 @@ export async function runDailyIdeas(devMode: boolean): Promise<CronRunResult> {
       count: 5,
     });
 
+    if (result.usedFallback) {
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_ideas",
+        status: "fallback_demo_candidates",
+        message: `OPENAI_API_KEY missing — generated deterministic demo candidates. Reason: ${result.fallbackReason ?? "unknown"}`,
+        payload: { run_date: runDate, fallback_reason: result.fallbackReason },
+      });
+    }
+
     // Write candidates to Supabase
     stage = "create_candidates";
-    await createTopicCandidates(run.id, candidates);
+    await createTopicCandidates(run.id, result.candidates);
     await logCronTriggered({
       runId: run.id,
       jobType: "daily_ideas",
       status: "candidates_generated",
-      message: `${candidates.length} topic candidates generated and saved`,
-      payload: { run_date: runDate, count: candidates.length },
+      message: `${result.candidates.length} topic candidates generated and saved${result.usedFallback ? " (demo fallback)" : ""}`,
+      payload: { run_date: runDate, count: result.candidates.length, used_fallback: result.usedFallback },
     });
 
     // Advance to ideas_ready then waiting_for_selection
@@ -214,12 +242,12 @@ export async function runDailyIdeas(devMode: boolean): Promise<CronRunResult> {
       run_date: runDate,
       run_id: run.id,
       dev_mode: devMode,
-      message: `${candidates.length} candidates generated — waiting for selection`,
-      candidate_count: candidates.length,
+      message: `${result.candidates.length} candidates generated${result.usedFallback ? " (demo fallback)" : ""} — waiting for selection`,
+      candidate_count: result.candidates.length,
+      used_fallback: result.usedFallback,
     };
 
   } catch (err) {
-    // Attempt to mark run as failed
     if (runId) {
       try {
         await updateRunStatus(runId, "failed", {
