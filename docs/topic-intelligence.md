@@ -174,9 +174,77 @@ Mock fallback candidates are real, Yusheng-specific examples — not generic pla
 
 ---
 
+---
+
+## Topic Candidate → Carousel Preview Flow
+
+Once 5 candidates are generated, each candidate card has a **Generate Carousel** button.
+
+```
+Topic Candidate
+      ↓
+POST /api/debug/generate-carousel-from-candidate
+      ↓
+OpenAI generates 8 slides (headline + body + visual_scene per slide)
+      ↓
+Caption + Hashtags
+      ↓
+Manual IG Launch Checklist
+      ↓
+Full carousel preview shown in-page
+```
+
+### Key Rules
+
+- **No writes to production** — carousel generation is read-only and preview-only
+- **Does not overwrite today's scheduled decision** — `daily_decisions` and `publish_jobs` are untouched
+- **No automatic Instagram posting** — all publishing is manual until Instagram integration exists
+- **Animated visual scenes are scene-based** — every slide has a real cinematic human scene direction, never abstract particles
+
+### Carousel API
+
+```
+POST /api/debug/generate-carousel-from-candidate
+Header: x-internal-debug-secret: <INTERNAL_DEBUG_SECRET>
+Body: { "candidate": <TopicCandidate> }
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "carousel": {
+    "topic": "...",
+    "angle": "...",
+    "slides": [ /* 8 slides with headline, body, visual_scene */ ],
+    "caption": "...",
+    "hashtags": [ "..." ],
+    "manual_launch_checklist": [ "..." ]
+  },
+  "writes": false,
+  "instagram_connected": false
+}
+```
+
+Returns `401 Unauthorized` without valid secret in production.
+Returns `500` with clear error message if OpenAI fails — no mock fallback.
+
+### Manual Launch Checklist (always shown)
+
+1. Confirm topic and angle match today's decision
+2. Review all 8 slides — headline and body copy
+3. Check all 8 visual scene directions
+4. Copy caption to clipboard
+5. Copy and prepare hashtag list
+6. Create or export 8 animated 4:5 video assets per visual_scene direction
+7. Manually upload to Instagram as carousel (8 slides)
+8. Schedule post for Today 20:00 Taiwan time
+
+---
+
 ## Future Work
 
 - [ ] Live market signals (social trends, search volume)
-- [ ] "Generate Carousel From This Topic" button (Issue #049+)
 - [ ] Save selected topic to `daily_decisions` as draft
 - [ ] Historical candidate tracking to avoid repeating recent topics
+- [ ] Instagram API integration for direct publishing

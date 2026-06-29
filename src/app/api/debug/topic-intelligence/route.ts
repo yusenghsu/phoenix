@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
     analysis_note: result.analysis_note,
     analysis: result.analysis,
     candidates: result.candidates,
+    launch_recommendation: result.launch_recommendation,
     ...(auth.devBypass && { environment: "development" }),
   });
 }

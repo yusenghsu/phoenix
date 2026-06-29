@@ -14,6 +14,10 @@ export interface VisualSceneDirection {
 export interface TopicCandidate {
   topic: string;
   hook: string;
+  editorial_thesis: string;
+  market_tension: string;
+  why_yusheng: string;
+  audience_hit: string[];
   core_angle: string;
   why_for_yusheng: string;
   why_market_resonates: string;
@@ -28,7 +32,14 @@ export interface TopicCandidate {
   brand_fit_score: number;
   risk_level: "low" | "medium" | "high";
   risk_reason: string;
+  is_recommended?: boolean;
   visual_scene_direction: VisualSceneDirection;
+}
+
+export interface LaunchRecommendation {
+  recommended_index: number;
+  why_this_wins: string;
+  why_others_lost: string[];
 }
 
 export interface PhoenixSignal {
@@ -47,6 +58,7 @@ export interface TopicIntelligenceOutput {
   market_source: "strategy_model";
   analysis_note: string;
   analysis: PhoenixAnalysis;
+  launch_recommendation: LaunchRecommendation;
 }
 
 function buildSystemPrompt(): string {
@@ -229,16 +241,32 @@ const MOCK_ANALYSIS: PhoenixAnalysis = {
   why_these_five: "這五個候選分別覆蓋：關係恐懼（沒朋友）、方法錯誤（瞎忙）、主管品質（選擇）、正確起步（前三個月）、身份認同（聰明人的盲點）。在一批中同時處理恐懼、方法、制度、起點和認知，讓不同階段的受眾都能找到對自己的那張。",
 };
 
+const MOCK_LAUNCH_RECOMMENDATION: LaunchRecommendation = {
+  recommended_index: 0,
+  why_this_wins: "「做保險真的會失去朋友嗎？」是新人最不敢問出口的恐懼，也是阻止最多人加入的隱性原因。這題共鳴面廣，情緒精準，而且小佑有具體答案——不是安慰，而是拆解真正讓關係變尷尬的方式。第一篇需要最廣的入場共鳴，這題符合。",
+  why_others_lost: [
+    "#2 「新人賺不到錢」：強但偏方法論，第一篇需要情緒鉤子先建立信任",
+    "#3 「選主管的命運」：對準新人很強，但共鳴範圍相對窄，第一篇要打更廣",
+    "#4 「前三個月框架」：實用性高，但方法論型適合中後期，第一篇要先抓情感",
+    "#5 「聰明人的盲點」：挑釁感強，適合受眾建立後再發，第一篇需要安全感"
+  ],
+};
+
 const MOCK_CANDIDATES: TopicCandidate[] = [
   {
-    topic: "做保險會沒朋友嗎？大多數人想錯方向了",
-    hook: "你怕開口，因為你怕失去他們。但問題不是保險，是你選錯了方式。",
-    core_angle: "區分「把朋友當名單」和「以朋友的身份說真話」，讓受眾重新定義自己的角色",
-    why_for_yusheng: "小佑說真話的定位：點出大家不敢說的恐懼，再給出具體反轉。這題只有在業界做過、親眼看過兩種結果的人才說得出來",
-    why_market_resonates: "關係恐懼是新人最大的隱性壓力——不是業績，是「我的朋友以後還會理我嗎」",
-    yusheng_voice_fit: "這題像小佑的風格，因為他不迴避這個問題，而是正面拆解。他的受眾就是在猶豫這一步的人，他一說，他們就覺得被看見",
-    first_slide_direction: "大字問句開場：「你做保險之後，有人說再也不接你電話了嗎？」字體重、白字黑底或深底，沒有裝飾，純粹問句壓著整個畫面",
-    comment_prompt: "留言告訴我：你做保險後，有沒有朋友開始疏遠你？",
+    topic: "做保險真的會失去朋友嗎？",
+    hook: "你做保險之後，有沒有朋友開始少回你訊息了？問題不在保險，在你用的方式。",
+    editorial_thesis: "保險新人最不敢問出口的恐懼：我做了保險，朋友還願意理我嗎？拆解真正讓關係變尷尬的原因，而不是給新人打氣。",
+    market_tension: "關係恐懼是新人最大的隱性壓力——不是業績，是「我的朋友以後還會理我嗎」這個問題從沒有人直接回答",
+    why_yusheng: "小佑不迴避這個問題，他直接說「不是保險的問題，是你用的方式」——這是業界做了10年以上才有的位置，給答案而不是打氣",
+    audience_hit: ["保險新人", "準新人", "猶豫要不要加入的年輕人"],
+    is_recommended: true,
+    core_angle: "做保險不是讓你失去朋友的原因——讓關係變尷尬的，是你把每一次聊天都變成成交壓力的方式",
+    why_for_yusheng: "小佑說真話的定位：他不迴避這個讓新人最怕開口的問題，而是直接拆解根本原因。這題只有帶過新人、親眼看過兩種結果的人才說得出來",
+    why_market_resonates: "關係恐懼是新人最大的隱性壓力——不是業績，是「我的朋友以後還會理我嗎」這個問題從沒有人直接回答",
+    yusheng_voice_fit: "這題像小佑的風格，他的受眾就是在猶豫這一步的人。他說的不是「加油你可以」，而是「你用錯了方式」——有建設性且直接",
+    first_slide_direction: "大字問句開場：「做保險真的會失去朋友嗎？」白字深底，字體重，純粹問句，讓有這個恐懼的人立刻停下來",
+    comment_prompt: "留言告訴我：你做保險後，有沒有朋友開始疏遠你？你是怎麼處理的？",
     target_audience: ["保險新人", "準新人", "猶豫要不要加入的年輕人"],
     content_type: "carousel",
     emotional_trigger: "被說中了，委屈被看見",
@@ -261,6 +289,10 @@ const MOCK_CANDIDATES: TopicCandidate[] = [
   {
     topic: "新人賺不到錢，你真的只是「能力問題」嗎？",
     hook: "你每天拜訪，每天被拒絕，每月業績歸零。在你懷疑自己之前，先看這個。",
+    editorial_thesis: "業績歸零不是能力問題，是系統問題。這篇替新人做一件大家都不做的事：把「你的錯」換回給「方法的錯」。",
+    market_tension: "努力與收入脫鉤是第一年最大的精神耗損，會讓人懷疑自己是不是根本不適合，再不說清楚，新人就跑了",
+    why_yusheng: "小佑帶過新人，他看過努力但歸零的樣子。他說「問題不是你，是方法」有說服力，因為他不是在安慰，他是在拆解",
+    audience_hit: ["保險新人", "卡關業務", "準新人"],
     core_angle: "拆解新人業績歸零的三個系統性原因：名單沒有篩選、拜訪沒有節奏、跟進缺乏深度——不是個人能力，是方法問題",
     why_for_yusheng: "這題讓小佑站在新人這邊，對抗的不是新人自己，而是「你不夠努力」的錯誤歸因。這是他的老師定位",
     why_market_resonates: "努力與收入脫鉤是第一年最大的精神耗損，會讓人懷疑自己是不是根本不適合，再不說清楚，新人就跑了",
@@ -289,6 +321,10 @@ const MOCK_CANDIDATES: TopicCandidate[] = [
   {
     topic: "你選主管，不只是選一個人，是選一種命運",
     hook: "有些主管帶你成長。有些主管消耗你兩年，讓你以為是自己不行。你有辦法在加入前看出來嗎？",
+    editorial_thesis: "加入保險業最關鍵的決定不是選公司，是選主管。但業界幾乎沒有人教你怎麼在加入前判斷。小佑給出可以實際操作的框架。",
+    market_tension: "主管品質落差是業界最公開的秘密，但很少人整理成「加入前怎麼看」的具體判斷工具",
+    why_yusheng: "小佑自己是主管，他站在準新人的利益說，不是為主管群體辯護。他給出的不是「謹慎選擇」的廢話，而是可以實際問的三個問題",
+    audience_hit: ["準新人", "保險新人", "正在評估要不要加入的人"],
     core_angle: "三個可以在加入前辨別主管品質的具體問題：他有沒有系統、他的成功能不能被複製、他願不願意花時間在你身上",
     why_for_yusheng: "小佑自己是主管，說這種話有信用。而且他站在準新人的利益說，不是為主管群體辯護——這是他的真話定位",
     why_market_resonates: "主管品質落差是業界最公開的秘密，但很少人整理成「加入前怎麼看」的具體判斷工具",
@@ -317,6 +353,10 @@ const MOCK_CANDIDATES: TopicCandidate[] = [
   {
     topic: "保險新人前三個月，你不需要業績，你需要這個",
     hook: "所有人都在逼你業績。但沒有人告訴你，前三個月真正要建立的不是業績，是讓你以後能撐下去的東西。",
+    editorial_thesis: "第一年新人流失的根本原因：被期望成交，但沒人教系統。小佑重新定義前三個月該做什麼，完全違反業界的標準話術。",
+    market_tension: "新人最大系統性問題：被期望太高但沒有系統支撐，在沒有方向的情況下努力，然後在方法還沒對的時候就放棄了",
+    why_yusheng: "小佑帶過新人，他知道前三個月多少人是因為「不知道自己在累積什麼」而離開的。他有框架，不是鼓勵",
+    audience_hit: ["保險新人", "準新人", "考慮放棄的業務"],
     core_angle: "重新定義前三個月的任務：不是硬衝成交，而是建立「可重複的拜訪節奏」、「理解一個真實的客戶需求」、「找到自己說得出口的切入點」",
     why_for_yusheng: "這題完全違反市場上「加油衝業績」的聲音，和小佑的反主流定位完全吻合，而且是他有能力說的話——他帶過新人",
     why_market_resonates: "年一新人最大系統性問題：被期望太高但沒有系統支撐，在沒有方向的情況下努力，然後放棄",
@@ -345,6 +385,10 @@ const MOCK_CANDIDATES: TopicCandidate[] = [
   {
     topic: "為什麼越聰明的人，在保險業越難做起來？",
     hook: "你分析能力比別人強，你看事情比別人快。但你的業績不如那個看起來沒你聰明的同事。這不是因為你差，而是因為你的聰明用錯地方了。",
+    editorial_thesis: "保險業最反直覺的現象：學歷高、分析力強的人，業績反而不如「草根」的同事。小佑拆解為什麼聰明在這裡是阻礙而不是優勢。",
+    market_tension: "高學歷轉職焦慮：自認有能力、有分析力，但業績不如看起來更「草根」的同事，造成深度身份衝突和放棄衝動",
+    why_yusheng: "小佑招募過高學歷新人，他親眼看過他們的盲點——過度分析、遲遲不行動、用邏輯取代信任。他說這個有現場依據，不是理論",
+    audience_hit: ["高學歷轉職者", "卡關業務", "準新人"],
     core_angle: "高分析型人格在保險的三個反效果：過度分析客戶導致遲遲不拜訪、用邏輯取代建立信任、把「我想清楚了」當成行動的替代",
     why_for_yusheng: "小佑喜歡說「反直覺的真相」，這題正是——優勢在某個脈絡裡變成了阻礙。這個角度讓高學歷轉職者覺得「這在說我」",
     why_market_resonates: "高學歷轉職焦慮是增員市場的現實張力：自認有能力、有分析力，但業績不如看起來更「草根」的同事，造成深度身份衝突",
@@ -396,6 +440,16 @@ function isValidCandidate(obj: unknown): obj is TopicCandidate {
   );
 }
 
+function isValidLaunchRecommendation(obj: unknown): obj is LaunchRecommendation {
+  if (typeof obj !== "object" || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return (
+    typeof o.recommended_index === "number" &&
+    typeof o.why_this_wins === "string" &&
+    Array.isArray(o.why_others_lost)
+  );
+}
+
 function isValidAnalysis(obj: unknown): obj is PhoenixAnalysis {
   if (typeof obj !== "object" || obj === null) return false;
   const o = obj as Record<string, unknown>;
@@ -406,7 +460,7 @@ function isValidAnalysis(obj: unknown): obj is PhoenixAnalysis {
   );
 }
 
-function isValidOutput(obj: unknown): obj is { candidates: TopicCandidate[]; analysis: PhoenixAnalysis; analysis_note: string } {
+function isValidOutput(obj: unknown): obj is { candidates: TopicCandidate[]; analysis: PhoenixAnalysis; analysis_note: string; launch_recommendation?: LaunchRecommendation } {
   if (typeof obj !== "object" || obj === null) return false;
   const o = obj as Record<string, unknown>;
   return (
@@ -428,6 +482,7 @@ export async function runTopicIntelligence(context: {
       market_source: "strategy_model",
       analysis_note: "OpenAI key not configured. Showing built-in strategy model candidates for Yusheng's insurance coaching brand.",
       analysis: MOCK_ANALYSIS,
+      launch_recommendation: MOCK_LAUNCH_RECOMMENDATION,
     };
   }
 
@@ -459,19 +514,24 @@ export async function runTopicIntelligence(context: {
 
     const raw = response.choices[0]?.message?.content;
     if (!raw) {
-      return { candidates: MOCK_CANDIDATES, market_source: "strategy_model", analysis_note: "OpenAI returned empty response. Showing strategy model fallback.", analysis: MOCK_ANALYSIS };
+      return { candidates: MOCK_CANDIDATES, market_source: "strategy_model", analysis_note: "OpenAI returned empty response. Showing strategy model fallback.", analysis: MOCK_ANALYSIS, launch_recommendation: MOCK_LAUNCH_RECOMMENDATION };
     }
 
     const parsed: unknown = JSON.parse(raw);
     if (!isValidOutput(parsed)) {
-      return { candidates: MOCK_CANDIDATES, market_source: "strategy_model", analysis_note: "OpenAI output did not match expected schema. Showing strategy model fallback.", analysis: MOCK_ANALYSIS };
+      return { candidates: MOCK_CANDIDATES, market_source: "strategy_model", analysis_note: "OpenAI output did not match expected schema. Showing strategy model fallback.", analysis: MOCK_ANALYSIS, launch_recommendation: MOCK_LAUNCH_RECOMMENDATION };
     }
+
+    const launchRec = isValidLaunchRecommendation(parsed.launch_recommendation)
+      ? parsed.launch_recommendation
+      : MOCK_LAUNCH_RECOMMENDATION;
 
     return {
       candidates: parsed.candidates,
       market_source: "strategy_model",
       analysis_note: parsed.analysis_note,
       analysis: parsed.analysis,
+      launch_recommendation: launchRec,
     };
   } catch {
     return {
@@ -479,6 +539,7 @@ export async function runTopicIntelligence(context: {
       market_source: "strategy_model",
       analysis_note: "OpenAI call failed. Showing strategy model fallback.",
       analysis: MOCK_ANALYSIS,
+      launch_recommendation: MOCK_LAUNCH_RECOMMENDATION,
     };
   }
 }
