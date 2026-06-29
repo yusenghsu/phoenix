@@ -9,16 +9,6 @@ import type {
   JobEvent,
 } from "@/lib/daily-workflow/types";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface RunDetails {
-  run: DailyRun;
-  candidates: TopicCandidate[];
-  slides: CarouselSlide[];
-  publishJobs: PublishJob[];
-  events: JobEvent[];
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
@@ -67,42 +57,36 @@ function SlideRow({ s }: { s: CarouselSlide }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+interface Details {
+  candidates: TopicCandidate[];
+  slides: CarouselSlide[];
+  publishJobs: PublishJob[];
+  events: JobEvent[];
+}
+
 export default function DailyRunsDebugPage() {
   const [loading, setLoading] = useState(true);
-  const [today, setToday] = useState<string>("");
+  const [today, setToday] = useState("");
+  const [storageMode, setStorageMode] = useState<"supabase" | "local" | null>(null);
   const [run, setRun] = useState<DailyRun | null>(null);
-  const [details, setDetails] = useState<Omit<RunDetails, "run"> | null>(null);
+  const [details, setDetails] = useState<Details | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
-  const fetchToday = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/debug/daily-runs");
-      const data = (await res.json()) as { status: string; run?: DailyRun; today?: string; error?: string };
-      if (data.status === "ok") {
-        setToday(data.today ?? "");
-        setRun(data.run ?? null);
-        if (data.run) {
-          await fetchDetails(data.run.id);
-        }
-      } else {
-        setError(data.error ?? "Unknown error");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const fetchDetails = async (runId: string) => {
+  const fetchDetails = useCallback(async (runId: string) => {
     try {
       const res = await fetch(`/api/debug/daily-runs?run_id=${runId}`);
-      const data = (await res.json()) as { status: string; candidates?: TopicCandidate[]; slides?: CarouselSlide[]; publishJobs?: PublishJob[]; events?: JobEvent[]; error?: string };
+      const data = (await res.json()) as {
+        status: string;
+        storage_mode?: "supabase" | "local";
+        candidates?: TopicCandidate[];
+        slides?: CarouselSlide[];
+        publishJobs?: PublishJob[];
+        events?: JobEvent[];
+      };
       if (data.status === "ok") {
+        if (data.storage_mode) setStorageMode(data.storage_mode);
         setDetails({
           candidates: data.candidates ?? [],
           slides: data.slides ?? [],
@@ -111,20 +95,49 @@ export default function DailyRunsDebugPage() {
         });
       }
     } catch { /* non-critical */ }
-  };
+  }, []);
+
+  const fetchToday = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/debug/daily-runs");
+      const data = (await res.json()) as {
+        status: string;
+        storage_mode?: "supabase" | "local";
+        run?: DailyRun;
+        today?: string;
+        error?: string;
+      };
+      if (data.status === "ok") {
+        setToday(data.today ?? "");
+        setStorageMode(data.storage_mode ?? null);
+        setRun(data.run ?? null);
+        if (data.run) await fetchDetails(data.run.id);
+      } else {
+        setError(data.error ?? "Unknown error");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchDetails]);
 
   useEffect(() => { fetchToday(); }, [fetchToday]);
 
   const handleCreateRun = async () => {
     setActionPending(true);
+    setError(null);
     try {
       const res = await fetch("/api/debug/daily-runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "create_today" }),
       });
-      const data = (await res.json()) as { status: string; run?: DailyRun; error?: string };
+      const data = (await res.json()) as { status: string; storage_mode?: "supabase" | "local"; run?: DailyRun; error?: string };
       if (data.status === "ok" && data.run) {
+        if (data.storage_mode) setStorageMode(data.storage_mode);
         setRun(data.run);
         setDetails({ candidates: [], slides: [], publishJobs: [], events: [] });
       } else {
@@ -147,8 +160,9 @@ export default function DailyRunsDebugPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "reset", run_id: run.id }),
       });
-      const data = (await res.json()) as { status: string; run?: DailyRun; error?: string };
+      const data = (await res.json()) as { status: string; storage_mode?: "supabase" | "local"; run?: DailyRun; error?: string };
       if (data.status === "ok" && data.run) {
+        if (data.storage_mode) setStorageMode(data.storage_mode);
         setRun(data.run);
       } else {
         setError(data.error ?? "Reset failed");
@@ -165,10 +179,15 @@ export default function DailyRunsDebugPage() {
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
 
         {/* Header */}
-        <div style={{ marginBottom: 32 }}>
+        <div style={{ marginBottom: 28 }}>
           <p style={{ color: "#9B9387", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Phoenix · Debug</p>
           <h1 style={{ color: "#FAFAF9", fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 4 }}>Daily Run Dashboard</h1>
-          <p style={{ color: "#9B9387", fontSize: 12 }}>台灣時間今日日期：{loading ? "讀取中…" : today}</p>
+          <p style={{ color: "#9B9387", fontSize: 12 }}>台灣時間今日：{loading ? "讀取中…" : today}</p>
+          <p style={{ color: storageMode === "supabase" ? "#4ade80" : storageMode === "local" ? "#FB923C" : "#6F675E", fontSize: 10, marginTop: 4 }}>
+            {storageMode === "supabase" && "狀態儲存：Supabase phoenix_daily_runs ✓"}
+            {storageMode === "local" && "狀態儲存：本機 JSON（Supabase tables 尚未套用）"}
+            {storageMode === null && "確認儲存模式中…"}
+          </p>
         </div>
 
         {/* Error */}
@@ -187,10 +206,12 @@ export default function DailyRunsDebugPage() {
               disabled={actionPending}
               style={{ height: 42, paddingLeft: 24, paddingRight: 24, borderRadius: 10, background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.22)", color: "#FB923C", fontSize: 13, fontWeight: 700, cursor: actionPending ? "not-allowed" : "pointer" }}
             >
-              建立今天 Daily Run
+              {actionPending ? "建立中…" : "建立今天 Daily Run"}
             </button>
           </div>
         )}
+
+        {loading && <p style={{ color: "#6F675E", fontSize: 12 }}>讀取中…</p>}
 
         {/* Run record */}
         {run && (
@@ -200,7 +221,9 @@ export default function DailyRunsDebugPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <p style={{ color: "#FAFAF9", fontSize: 14, fontWeight: 700 }}>{run.run_date}</p>
-                    <p style={{ color: "#9B9387", fontSize: 10, marginTop: 2 }}>profile: {run.profile_key} · id: {run.id.slice(0, 8)}…</p>
+                    <p style={{ color: "#9B9387", fontSize: 10, marginTop: 2 }}>
+                      profile: {run.profile_key} · id: {run.id.slice(0, 8)}…
+                    </p>
                   </div>
                   <StatusBadge status={run.status} />
                 </div>
@@ -209,14 +232,14 @@ export default function DailyRunsDebugPage() {
                     錯誤：{run.error_code} — {run.error_message}
                   </p>
                 )}
-                <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
                   <p style={{ color: "#6F675E", fontSize: 9 }}>建立：{run.created_at?.slice(0, 16) ?? "—"}</p>
                   {run.started_at && <p style={{ color: "#6F675E", fontSize: 9 }}>開始：{run.started_at.slice(0, 16)}</p>}
                   {run.finished_at && <p style={{ color: "#6F675E", fontSize: 9 }}>結束：{run.finished_at.slice(0, 16)}</p>}
                 </div>
 
                 {/* Debug actions */}
-                <div style={{ display: "flex", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                <div style={{ display: "flex", gap: 8, marginTop: 6, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
                   <button
                     onClick={() => run && fetchDetails(run.id)}
                     disabled={actionPending}
