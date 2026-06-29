@@ -125,6 +125,8 @@ interface SlideMotionState {
   motionStatus: "missing" | "generating" | "generated" | "failed";
   motionError?: RunwayDiagnostic;
   providerRatioStatus: "unknown" | "accepted_intermediate" | "failed";
+  providerRatioDims?: { width: number; height: number };
+  providerRatioNote?: string;
   compositionStatus: "missing" | "needed" | "composing" | "composed" | "failed";
   finalRatioStatus: "unknown" | "passed_4_5";
   finalVideoUrl?: string;
@@ -1176,6 +1178,7 @@ export default function FinalLaunchStudioPage() {
   const [generatingSlide, setGeneratingSlide] = useState<number | null>(null);
   const [selectedArtwork, setSelectedArtwork] = useState(0);
   const cancelRef = useRef(false);
+  const [otherSlideStates, setOtherSlideStates] = useState<Record<number, SlideMotionState>>({});
 
   // Fit Room state (debug)
   const [fitRoomSlide, setFitRoomSlide] = useState(0);
@@ -1541,6 +1544,161 @@ export default function FinalLaunchStudioPage() {
     attemptCountRef.current = 0;
   }, []);
 
+  // ── Generic per-slide handlers (delegate to slide-1 handlers for index 0) ──────
+
+  const handleGenerateKeyframe = useCallback(async (slideIndex: number) => {
+    if (slideIndex === 0) return handleGenerateSlide1Keyframe();
+    const config = SLIDE_MOTION_CONFIGS[slideIndex];
+    const slideId = config?.slideId ?? `slide-0${String(slideIndex + 1).padStart(2, "0")}`;
+    const slide = slides[slideIndex];
+    const patch = (p: Partial<SlideMotionState>) =>
+      setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), ...p } }));
+    patch({ keyframeStatus: "generating", keyframeUrl: undefined });
+    try {
+      const res = await fetch("/api/debug/final-launch/generate-slide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slide_id: slideId, prompt: slide.still_preview.image_generation_prompt, negative_prompt: slide.still_preview.negative_prompt }),
+      });
+      const data = (await res.json()) as { status: string; image_url?: string; error?: string };
+      if (data.status === "generated" && data.image_url) {
+        patch({ keyframeStatus: "generated", keyframeUrl: data.image_url });
+      } else {
+        patch({ keyframeStatus: "failed" });
+      }
+    } catch {
+      patch({ keyframeStatus: "failed" });
+    }
+  }, [handleGenerateSlide1Keyframe, slides]);
+
+  const handleGenerateMotion = useCallback(async (slideIndex: number, promptMode: "normal" | "safe", keyframeUrl?: string) => {
+    if (slideIndex === 0) {
+      return promptMode === "safe" ? handleRetrySlide1MotionSafe() : handleGenerateSlide1Motion();
+    }
+    if (!keyframeUrl) return;
+    const config = SLIDE_MOTION_CONFIGS[slideIndex];
+    const slideId = config?.slideId ?? `slide-0${String(slideIndex + 1).padStart(2, "0")}`;
+    const slide = slides[slideIndex];
+    const motionPrompt = slide.motion_asset.video_generation_prompt;
+    const patch = (p: Partial<SlideMotionState>) =>
+      setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), ...p } }));
+    patch({ motionStatus: "generating", motionError: undefined });
+    try {
+      const res = await fetch("/api/debug/final-launch/generate-motion-from-keyframe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slide_id: slideId, keyframe_url: keyframeUrl, motion_prompt: motionPrompt, duration_seconds: 5 }),
+      });
+      const data = (await res.json()) as { status: string; background_video_url?: string; error?: string; task_id?: string; failure_code?: string; failure_message?: string; debug_hint?: string };
+      if (data.status === "video_generated" && data.background_video_url) {
+        patch({ motionStatus: "generated", intermediateVideoUrl: data.background_video_url, providerRatioStatus: "accepted_intermediate", compositionStatus: "needed" });
+        setMotionVideoUrls(prev => ({ ...prev, [slideIndex]: data.background_video_url! }));
+      } else {
+        patch({ motionStatus: "failed", motionError: { error: data.error ?? "Unknown error", task_id: data.task_id, failure_code: data.failure_code, failure_message: data.failure_message, debug_hint: data.debug_hint } });
+      }
+    } catch (err) {
+      patch({ motionStatus: "failed", motionError: { error: err instanceof Error ? err.message : String(err) } });
+    }
+  }, [handleRetrySlide1MotionSafe, handleGenerateSlide1Motion, slides]);
+
+  const handleComposeFinalSlide = useCallback(async (slideIndex: number) => {
+    if (slideIndex === 0) return handleComposeFinalSlide1();
+    const config = SLIDE_MOTION_CONFIGS[slideIndex];
+    const slideId = config?.slideId ?? `slide-0${String(slideIndex + 1).padStart(2, "0")}`;
+    const patch = (p: Partial<SlideMotionState>) =>
+      setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), ...p } }));
+    patch({ compositionStatus: "composing", composingError: undefined });
+    try {
+      const res = await fetch("/api/debug/final-launch/compose-slide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slide_id: slideId }),
+      });
+      const data = (await res.json()) as { status: string; final_video_url?: string; error?: string };
+      if (data.status === "composed" && data.final_video_url) {
+        patch({ compositionStatus: "composed", finalVideoUrl: data.final_video_url, finalRatioStatus: "passed_4_5" });
+      } else {
+        patch({ compositionStatus: "failed", composingError: data.error ?? "Composition failed." });
+      }
+    } catch (err) {
+      patch({ compositionStatus: "failed", composingError: err instanceof Error ? err.message : String(err) });
+    }
+  }, [handleComposeFinalSlide1]);
+
+  const handleClearSlideAssets = useCallback(async (slideIndex: number) => {
+    if (slideIndex === 0) return handleClearSavedAssets();
+    const config = SLIDE_MOTION_CONFIGS[slideIndex];
+    const slideId = config?.slideId ?? `slide-0${String(slideIndex + 1).padStart(2, "0")}`;
+    try { await fetch(`/api/debug/final-launch/manifest?slide_id=${slideId}`, { method: "DELETE" }); } catch { /* ignore */ }
+    setOtherSlideStates(prev => { const next = { ...prev }; delete next[slideIndex]; return next; });
+    setMotionVideoUrls(prev => { const next = { ...prev }; delete next[slideIndex]; return next; });
+  }, [handleClearSavedAssets]);
+
+  const handleRestoreSlideAssets = useCallback(async (slideIndex: number) => {
+    if (slideIndex === 0) return restoreFromManifest();
+    setManifestRestoring(true);
+    const config = SLIDE_MOTION_CONFIGS[slideIndex];
+    const manifestKey = config?.id ?? `slide_0${String(slideIndex + 1).padStart(2, "0")}`;
+    try {
+      const res = await fetch("/api/debug/final-launch/manifest");
+      if (!res.ok) return;
+      const data = (await res.json()) as { status: string; manifest?: Record<string, { keyframe_url?: string; runway_intermediate_video_url?: string; final_composition_status?: string; final_video_url?: string; final_ratio_status?: string }> };
+      const slideData = data.manifest?.[manifestKey];
+      if (!slideData) return;
+      const p: Partial<SlideMotionState> = {};
+      if (slideData.keyframe_url) { p.keyframeUrl = slideData.keyframe_url; p.keyframeStatus = "generated"; }
+      if (slideData.runway_intermediate_video_url) {
+        p.intermediateVideoUrl = slideData.runway_intermediate_video_url;
+        p.motionStatus = "generated";
+        p.providerRatioStatus = "accepted_intermediate";
+        p.compositionStatus = slideData.final_composition_status === "composed" ? "composed" : "needed";
+        setMotionVideoUrls(prev => ({ ...prev, [slideIndex]: slideData.runway_intermediate_video_url! }));
+      }
+      if (slideData.final_video_url) { p.finalVideoUrl = slideData.final_video_url; p.compositionStatus = "composed"; }
+      if (slideData.final_ratio_status === "passed_4_5") p.finalRatioStatus = "passed_4_5";
+      setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), ...p } }));
+    } catch { /* non-critical */ } finally {
+      setManifestRestoring(false);
+    }
+  }, [restoreFromManifest]);
+
+  const handleRecoverTask = useCallback(async (slideIndex: number, taskId: string) => {
+    if (slideIndex === 0) return handleRecoverRunwayTask();
+    if (!taskId.trim()) return;
+    const config = SLIDE_MOTION_CONFIGS[slideIndex];
+    const slideId = config?.slideId ?? `slide-0${String(slideIndex + 1).padStart(2, "0")}`;
+    const patch = (p: Partial<SlideMotionState>) =>
+      setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), ...p } }));
+    patch({ recoverStatus: "recovering", recoverError: undefined, recoverDiagnostic: undefined });
+    try {
+      const res = await fetch("/api/debug/final-launch/recover-runway-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slide_id: slideId, task_id: taskId.trim() }),
+      });
+      const data = (await res.json()) as { status: string; runway_intermediate_video_url?: string; error?: string; failure_message?: string; attempted_endpoint?: string; runway_http_status?: number; hint?: string };
+      if (data.status === "recovered" && data.runway_intermediate_video_url) {
+        patch({ recoverStatus: "recovered", motionStatus: "generated", intermediateVideoUrl: data.runway_intermediate_video_url, providerRatioStatus: "accepted_intermediate", compositionStatus: "needed" });
+        setMotionVideoUrls(prev => ({ ...prev, [slideIndex]: data.runway_intermediate_video_url! }));
+      } else {
+        patch({ recoverStatus: "failed", recoverError: data.error ?? data.failure_message ?? "Recovery failed.", recoverDiagnostic: { attempted_endpoint: data.attempted_endpoint, runway_http_status: data.runway_http_status, hint: data.hint } });
+      }
+    } catch (err) {
+      patch({ recoverStatus: "failed", recoverError: err instanceof Error ? err.message : String(err) });
+    }
+  }, [handleRecoverRunwayTask]);
+
+  const handleRecoverTaskIdChange = useCallback((slideIndex: number, val: string) => {
+    if (slideIndex === 0) {
+      setRecoverTaskId(val);
+      setRecoverStatus("idle");
+      setRecoverError(undefined);
+      setRecoverDiagnostic(undefined);
+    } else {
+      setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), recoverTaskId: val, recoverStatus: "idle", recoverError: undefined, recoverDiagnostic: undefined } }));
+    }
+  }, []);
+
   // Validate Runway intermediate output ratio — dual layer:
   // 1. Browser onLoadedMetadata (dimensions from actual video)
   // 2. 8-second fallback to declared Runway request ratio (832:1104) if metadata unavailable
@@ -1624,6 +1782,8 @@ export default function FinalLaunchStudioPage() {
           slide1ProviderRatioStatus === "accepted_intermediate" ? "accepted_intermediate"
           : slide1ProviderRatioStatus === "failed" ? "failed"
           : "unknown",
+        providerRatioDims: slide1ProviderRatioDims,
+        providerRatioNote: slide1ProviderRatioNote,
         compositionStatus: slide1CompositionStatus,
         finalRatioStatus: slide1FinalRatioStatus === "passed_4_5" ? "passed_4_5" : "unknown",
         finalVideoUrl: slide1FinalVideoUrl,
@@ -1636,7 +1796,7 @@ export default function FinalLaunchStudioPage() {
         recoverDiagnostic,
       };
     }
-    return createEmptySlideMotionState(i);
+    return otherSlideStates[i] ?? createEmptySlideMotionState(i);
   });
 
   const readySlideCount = slideMotionStates.filter(
@@ -1647,6 +1807,14 @@ export default function FinalLaunchStudioPage() {
       getEffectiveCompositionStatus(s) === "composed" &&
       s.finalRatioStatus === "passed_4_5"
   ).length;
+
+  // Derived: selected slide for detail pipeline
+  const safeSelectedIndex = Number.isInteger(selectedMotionSlide) && selectedMotionSlide >= 0 && selectedMotionSlide < slides.length ? selectedMotionSlide : 0;
+  const selectedSlideNumber = safeSelectedIndex + 1;
+  const selectedState = slideMotionStates[safeSelectedIndex];
+  const effectiveSelectedCompositionStatus = getEffectiveCompositionStatus(selectedState);
+  const selectedHasSavedAssets = !!(selectedState.keyframeUrl || selectedState.finalVideoUrl || selectedState.intermediateVideoUrl);
+  const selectedRecoverTaskId = safeSelectedIndex === 0 ? recoverTaskId : (selectedState.recoverTaskId ?? "");
 
   return (
     <div style={{ minHeight: "100vh", background: "#0C0A08", padding: "40px 16px 100px" }}>
@@ -1700,42 +1868,42 @@ export default function FinalLaunchStudioPage() {
           {/* Header */}
           <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
             <div>
-              <p style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 700, marginBottom: 3 }}>第 1 張｜首幀動態流程</p>
+              <p style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 700, marginBottom: 3 }}>第 {selectedSlideNumber} 張｜首幀動態流程</p>
               <p style={{ color: "#9B9387", fontSize: 11, lineHeight: 1.55 }}>
                 OpenAI 生成 4:5 首幀 → Runway 從首幀生成動態 → Phoenix 燒入中文文字
               </p>
               {/* Restore / Clear saved assets */}
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                {hasSavedAssets && (
+                {selectedHasSavedAssets && (
                   <button
-                    onClick={() => restoreFromManifest()}
+                    onClick={() => handleRestoreSlideAssets(safeSelectedIndex)}
                     disabled={manifestRestoring}
                     style={{ height: 26, padding: "0 10px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#CFC7BA", fontSize: 9, fontWeight: 700, cursor: manifestRestoring ? "not-allowed" : "pointer" }}
                   >
-                    {manifestRestoring ? "還原中…" : "還原第 1 張已儲存素材"}
+                    {manifestRestoring ? "還原中…" : `還原第 ${selectedSlideNumber} 張已儲存素材`}
                   </button>
                 )}
-                {hasSavedAssets && (
+                {selectedHasSavedAssets && (
                   <button
-                    onClick={handleClearSavedAssets}
+                    onClick={() => handleClearSlideAssets(safeSelectedIndex)}
                     style={{ height: 26, padding: "0 10px", borderRadius: 6, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.14)", color: "#f87171", fontSize: 9, fontWeight: 700, cursor: "pointer" }}
                   >
-                    清除第 1 張已儲存素材
+                    {`清除第 ${selectedSlideNumber} 張已儲存素材`}
                   </button>
                 )}
               </div>
             </div>
-            {slide1FinalRatioStatus === "passed_4_5" && (
+            {selectedState.finalRatioStatus === "passed_4_5" && (
               <span style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.22)", borderRadius: 7, padding: "4px 12px", color: "#4ade80", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", flexShrink: 0, marginTop: 2 }}>
-                第 1 張｜可進行審核
+                第 {selectedSlideNumber} 張｜可進行審核
               </span>
             )}
-            {slide1MotionStatus === "generated" && slide1ProviderRatioStatus === "accepted_intermediate" && slide1FinalRatioStatus !== "passed_4_5" && (
+            {selectedState.motionStatus === "generated" && selectedState.providerRatioStatus === "accepted_intermediate" && selectedState.finalRatioStatus !== "passed_4_5" && (
               <span style={{ background: "rgba(249,115,22,0.07)", border: "1px solid rgba(249,115,22,0.20)", borderRadius: 7, padding: "4px 10px", color: "#FB923C", fontSize: 8, fontWeight: 700, letterSpacing: "0.06em", flexShrink: 0, marginTop: 2, textAlign: "right" as const, maxWidth: 160 }}>
                 動態已生成<br />需進行最終 4:5 合成
               </span>
             )}
-            {slide1MotionStatus === "generated" && slide1ProviderRatioStatus === "failed" && (
+            {selectedState.motionStatus === "generated" && selectedState.providerRatioStatus === "failed" && (
               <span style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.18)", borderRadius: 7, padding: "4px 10px", color: "#f87171", fontSize: 8, fontWeight: 700, letterSpacing: "0.06em", flexShrink: 0, marginTop: 2 }}>
                 比例驗證失敗
               </span>
@@ -1743,7 +1911,7 @@ export default function FinalLaunchStudioPage() {
           </div>
 
           {/* Recover Existing Runway Task — dev-only */}
-          {slide1MotionStatus !== "generated" && (
+          {selectedState.motionStatus !== "generated" && (
             <div style={{ marginBottom: 14, background: "rgba(59,130,246,0.04)", border: "1px solid rgba(59,130,246,0.12)", borderRadius: 10, padding: "12px 14px" }}>
               <p style={{ color: "#60a5fa", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>
                 恢復現有 Runway 任務
@@ -1754,49 +1922,49 @@ export default function FinalLaunchStudioPage() {
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                 <input
                   type="text"
-                  value={recoverTaskId}
-                  onChange={(e) => { setRecoverTaskId(e.target.value); setRecoverStatus("idle"); setRecoverError(undefined); setRecoverDiagnostic(undefined); }}
+                  value={selectedRecoverTaskId}
+                  onChange={(e) => handleRecoverTaskIdChange(safeSelectedIndex, e.target.value)}
                   placeholder="Runway 任務 ID"
                   style={{ flex: 1, height: 34, borderRadius: 8, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#CFC7BA", fontSize: 11, padding: "0 10px", fontFamily: "monospace", outline: "none" }}
                 />
                 <button
-                  onClick={handleRecoverRunwayTask}
-                  disabled={!recoverTaskId.trim() || recoverStatus === "recovering"}
+                  onClick={() => handleRecoverTask(safeSelectedIndex, selectedRecoverTaskId)}
+                  disabled={!selectedRecoverTaskId.trim() || selectedState.recoverStatus === "recovering"}
                   style={{
                     height: 34, padding: "0 14px", borderRadius: 8,
-                    background: recoverStatus === "recovering" ? "rgba(255,255,255,0.02)" : "rgba(59,130,246,0.08)",
-                    border: recoverStatus === "recovering" ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(59,130,246,0.22)",
-                    color: recoverStatus === "recovering" ? "#9B9387" : "#60a5fa",
+                    background: selectedState.recoverStatus === "recovering" ? "rgba(255,255,255,0.02)" : "rgba(59,130,246,0.08)",
+                    border: selectedState.recoverStatus === "recovering" ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(59,130,246,0.22)",
+                    color: selectedState.recoverStatus === "recovering" ? "#9B9387" : "#60a5fa",
                     fontSize: 11, fontWeight: 700,
-                    cursor: recoverStatus === "recovering" ? "not-allowed" : "pointer",
+                    cursor: selectedState.recoverStatus === "recovering" ? "not-allowed" : "pointer",
                     flexShrink: 0,
                   }}
                 >
-                  {recoverStatus === "recovering" ? "恢復中…" : "恢復"}
+                  {selectedState.recoverStatus === "recovering" ? "恢復中…" : "恢復"}
                 </button>
               </div>
-              {recoverStatus === "recovered" && (
+              {selectedState.recoverStatus === "recovered" && (
                 <p style={{ color: "#4ade80", fontSize: 10, fontWeight: 700 }}>✓ Runway 任務已恢復｜影片已儲存於本地，清單已更新。</p>
               )}
-              {recoverStatus === "failed" && recoverError && (
+              {selectedState.recoverStatus === "failed" && selectedState.recoverError && (
                 <div style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 8, padding: "10px 12px" }}>
                   <p style={{ color: "#f87171", fontSize: 10, fontWeight: 700, marginBottom: 6 }}>✗ 恢復失敗</p>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.55 }}>{recoverError}</p>
-                    {recoverDiagnostic?.runway_http_status && (
+                    <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.55 }}>{selectedState.recoverError}</p>
+                    {selectedState.recoverDiagnostic?.runway_http_status && (
                       <div style={{ display: "flex", gap: 8 }}>
                         <span style={{ color: "#9B9387", fontSize: 9, fontWeight: 600, flexShrink: 0 }}>HTTP 狀態碼</span>
-                        <span style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace" }}>{recoverDiagnostic.runway_http_status}</span>
+                        <span style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace" }}>{selectedState.recoverDiagnostic.runway_http_status}</span>
                       </div>
                     )}
-                    {recoverDiagnostic?.attempted_endpoint && (
+                    {selectedState.recoverDiagnostic?.attempted_endpoint && (
                       <div style={{ display: "flex", gap: 8 }}>
                         <span style={{ color: "#9B9387", fontSize: 9, fontWeight: 600, flexShrink: 0 }}>端點</span>
-                        <span style={{ color: "#CFC7BA", fontSize: 9, fontFamily: "monospace" }}>{recoverDiagnostic.attempted_endpoint}</span>
+                        <span style={{ color: "#CFC7BA", fontSize: 9, fontFamily: "monospace" }}>{selectedState.recoverDiagnostic.attempted_endpoint}</span>
                       </div>
                     )}
-                    {recoverDiagnostic?.hint && (
-                      <p style={{ color: "#9B9387", fontSize: 9, lineHeight: 1.6, marginTop: 2 }}>{recoverDiagnostic.hint}</p>
+                    {selectedState.recoverDiagnostic?.hint && (
+                      <p style={{ color: "#9B9387", fontSize: 9, lineHeight: 1.6, marginTop: 2 }}>{selectedState.recoverDiagnostic.hint}</p>
                     )}
                   </div>
                 </div>
@@ -1810,28 +1978,28 @@ export default function FinalLaunchStudioPage() {
               步驟 1｜生成 4:5 首幀（OpenAI）
             </p>
             <button
-              onClick={handleGenerateSlide1Keyframe}
-              disabled={slide1KeyframeStatus === "generating"}
+              onClick={() => handleGenerateKeyframe(safeSelectedIndex)}
+              disabled={selectedState.keyframeStatus === "generating"}
               style={{
                 width: "100%", height: 40, borderRadius: 10,
-                background: slide1KeyframeStatus === "generating" ? "rgba(255,255,255,0.02)" : slide1KeyframeStatus === "generated" ? "rgba(249,115,22,0.06)" : "rgba(255,255,255,0.04)",
-                border: slide1KeyframeStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : slide1KeyframeStatus === "generated" ? "1px solid rgba(249,115,22,0.18)" : "1px solid rgba(255,255,255,0.09)",
-                color: slide1KeyframeStatus === "generating" ? "#9B9387" : slide1KeyframeStatus === "generated" ? "#FB923C" : "#CFC7BA",
-                fontSize: 12, fontWeight: 700, cursor: slide1KeyframeStatus === "generating" ? "not-allowed" : "pointer",
+                background: selectedState.keyframeStatus === "generating" ? "rgba(255,255,255,0.02)" : selectedState.keyframeStatus === "generated" ? "rgba(249,115,22,0.06)" : "rgba(255,255,255,0.04)",
+                border: selectedState.keyframeStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : selectedState.keyframeStatus === "generated" ? "1px solid rgba(249,115,22,0.18)" : "1px solid rgba(255,255,255,0.09)",
+                color: selectedState.keyframeStatus === "generating" ? "#9B9387" : selectedState.keyframeStatus === "generated" ? "#FB923C" : "#CFC7BA",
+                fontSize: 12, fontWeight: 700, cursor: selectedState.keyframeStatus === "generating" ? "not-allowed" : "pointer",
               }}
             >
-              {slide1KeyframeStatus === "generating" ? "生成 4:5 首幀中…（20–40 秒）" : slide1KeyframeStatus === "generated" ? "↺ 重新生成第 1 張首幀" : "生成第 1 張首幀（OpenAI）"}
+              {selectedState.keyframeStatus === "generating" ? "生成 4:5 首幀中…（20–40 秒）" : selectedState.keyframeStatus === "generated" ? `↺ 重新生成第 ${selectedSlideNumber} 張首幀` : `生成第 ${selectedSlideNumber} 張首幀（OpenAI）`}
             </button>
 
-            {slide1KeyframeStatus === "failed" && (
+            {selectedState.keyframeStatus === "failed" && (
               <p style={{ color: "#f87171", fontSize: 10, marginTop: 6 }}>首幀生成失敗。請確認 .env.local 中的 OPENAI_API_KEY。</p>
             )}
 
-            {slide1KeyframeUrl && slide1KeyframeStatus === "generated" && (
+            {selectedState.keyframeUrl && selectedState.keyframeStatus === "generated" && (
               <div style={{ marginTop: 10 }}>
                 <div style={{ position: "relative", width: 120, aspectRatio: "4 / 5", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.10)" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={slide1KeyframeUrl} alt="第 1 張首幀" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <img src={selectedState.keyframeUrl} alt={`第 ${selectedSlideNumber} 張首幀`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 </div>
                 <p style={{ color: "#9B9387", fontSize: 9, marginTop: 4 }}>僅為靜態首幀｜非最終動態輸出</p>
               </div>
@@ -1840,68 +2008,68 @@ export default function FinalLaunchStudioPage() {
 
           {/* Step 2 — Motion from keyframe */}
           <div>
-            <p style={{ color: slide1KeyframeStatus === "generated" ? "#9B9387" : "#9B9387", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
+            <p style={{ color: "#9B9387", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
               步驟 2｜從首幀生成動態（Runway）
             </p>
             <button
-              onClick={handleGenerateSlide1Motion}
-              disabled={slide1KeyframeStatus !== "generated" || slide1MotionStatus === "generating"}
+              onClick={() => handleGenerateMotion(safeSelectedIndex, "normal", selectedState.keyframeUrl)}
+              disabled={selectedState.keyframeStatus !== "generated" || selectedState.motionStatus === "generating"}
               style={{
                 width: "100%", height: 40, borderRadius: 10,
-                background: slide1KeyframeStatus !== "generated" ? "rgba(255,255,255,0.01)" : slide1MotionStatus === "generating" ? "rgba(255,255,255,0.02)" : slide1MotionStatus === "generated" ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.04)",
-                border: slide1KeyframeStatus !== "generated" ? "1px solid rgba(255,255,255,0.04)" : slide1MotionStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : slide1MotionStatus === "generated" ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(255,255,255,0.09)",
-                color: slide1KeyframeStatus !== "generated" ? "#6F675E" : slide1MotionStatus === "generating" ? "#9B9387" : slide1MotionStatus === "generated" ? "#4ade80" : "#CFC7BA",
+                background: selectedState.keyframeStatus !== "generated" ? "rgba(255,255,255,0.01)" : selectedState.motionStatus === "generating" ? "rgba(255,255,255,0.02)" : selectedState.motionStatus === "generated" ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.04)",
+                border: selectedState.keyframeStatus !== "generated" ? "1px solid rgba(255,255,255,0.04)" : selectedState.motionStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : selectedState.motionStatus === "generated" ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(255,255,255,0.09)",
+                color: selectedState.keyframeStatus !== "generated" ? "#6F675E" : selectedState.motionStatus === "generating" ? "#9B9387" : selectedState.motionStatus === "generated" ? "#4ade80" : "#CFC7BA",
                 fontSize: 12, fontWeight: 700,
-                cursor: slide1KeyframeStatus !== "generated" || slide1MotionStatus === "generating" ? "not-allowed" : "pointer",
+                cursor: selectedState.keyframeStatus !== "generated" || selectedState.motionStatus === "generating" ? "not-allowed" : "pointer",
               }}
             >
-              {slide1KeyframeStatus !== "generated"
-                ? "生成第 1 張動態｜需先完成首幀"
-                : slide1MotionStatus === "generating"
+              {selectedState.keyframeStatus !== "generated"
+                ? `生成第 ${selectedSlideNumber} 張動態｜請先產生首幀圖`
+                : selectedState.motionStatus === "generating"
                 ? "從首幀生成動態中…（60–120 秒）"
-                : slide1MotionStatus === "generated"
-                ? "↺ 重新生成第 1 張動態"
-                : "從首幀生成第 1 張動態（Runway）"}
+                : selectedState.motionStatus === "generated"
+                ? `↺ 重新生成第 ${selectedSlideNumber} 張動態`
+                : `從首幀生成第 ${selectedSlideNumber} 張動態（Runway）`}
             </button>
 
-            {slide1MotionStatus === "generating" && (
+            {selectedState.motionStatus === "generating" && (
               <p style={{ color: "#9B9387", fontSize: 10, textAlign: "center", marginTop: 6 }}>
                 Runway 正在從首幀生成動態，請勿關閉此頁籤。
               </p>
             )}
 
-            {slide1MotionStatus === "failed" && slide1MotionError && (
+            {selectedState.motionStatus === "failed" && selectedState.motionError && (
               <div style={{ marginTop: 10, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 10, padding: "14px 16px" }}>
                 <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 10 }}>動態生成失敗</p>
 
                 {/* Diagnostic rows */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
-                  {slide1MotionError.task_id && (
+                  {selectedState.motionError.task_id && (
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                       <span style={{ color: "#9B9387", fontSize: 10, fontWeight: 600, flexShrink: 0 }}>任務 ID</span>
-                      <span style={{ color: "#CFC7BA", fontSize: 10, fontFamily: "monospace", wordBreak: "break-all" as const, textAlign: "right" as const }}>{slide1MotionError.task_id}</span>
+                      <span style={{ color: "#CFC7BA", fontSize: 10, fontFamily: "monospace", wordBreak: "break-all" as const, textAlign: "right" as const }}>{selectedState.motionError.task_id}</span>
                     </div>
                   )}
-                  {slide1MotionError.failure_code && (
+                  {selectedState.motionError.failure_code && (
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
                       <span style={{ color: "#9B9387", fontSize: 10, fontWeight: 600, flexShrink: 0 }}>失敗代碼</span>
-                      <span style={{ color: "#f87171", fontSize: 10, fontFamily: "monospace" }}>{slide1MotionError.failure_code}</span>
+                      <span style={{ color: "#f87171", fontSize: 10, fontFamily: "monospace" }}>{selectedState.motionError.failure_code}</span>
                     </div>
                   )}
-                  {slide1MotionError.failure_message && (
+                  {selectedState.motionError.failure_message && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                       <span style={{ color: "#9B9387", fontSize: 10, fontWeight: 600 }}>失敗訊息</span>
-                      <span style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.55 }}>{slide1MotionError.failure_message}</span>
+                      <span style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.55 }}>{selectedState.motionError.failure_message}</span>
                     </div>
                   )}
                   <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                     <span style={{ color: "#9B9387", fontSize: 10, fontWeight: 600 }}>錯誤</span>
-                    <span style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.55 }}>{slide1MotionError.error}</span>
+                    <span style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.55 }}>{selectedState.motionError.error}</span>
                   </div>
                 </div>
 
                 {/* BAD_OUTPUT-specific hint */}
-                {slide1MotionError.failure_code?.includes("INTERNAL.BAD_OUTPUT") && (
+                {selectedState.motionError.failure_code?.includes("INTERNAL.BAD_OUTPUT") && (
                   <div style={{ background: "rgba(249,115,22,0.05)", border: "1px solid rgba(249,115,22,0.15)", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
                     <p style={{ color: "#FB923C", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>Runway 內部輸出品質拒絕</p>
                     <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.6 }}>
@@ -1913,10 +2081,10 @@ export default function FinalLaunchStudioPage() {
                 {/* Dashboard hint */}
                 <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
                   <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.6 }}>
-                    {slide1MotionError.debug_hint ?? "請至 Runway 後台 → 請求歷史記錄查看此任務 ID。"}
-                    {slide1MotionError.task_id && (
+                    {selectedState.motionError.debug_hint ?? "請至 Runway 後台 → 請求歷史記錄查看此任務 ID。"}
+                    {selectedState.motionError.task_id && (
                       <span style={{ display: "block", color: "#9B9387", fontFamily: "monospace", fontSize: 9, marginTop: 3 }}>
-                        任務：{slide1MotionError.task_id}
+                        任務：{selectedState.motionError.task_id}
                       </span>
                     )}
                   </p>
@@ -1925,7 +2093,7 @@ export default function FinalLaunchStudioPage() {
                 {/* Recovery actions */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <button
-                    onClick={handleRetrySlide1MotionSafe}
+                    onClick={() => handleGenerateMotion(safeSelectedIndex, "safe", selectedState.keyframeUrl)}
                     style={{
                       width: "100%", height: 36, borderRadius: 8,
                       background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.22)",
@@ -1934,20 +2102,22 @@ export default function FinalLaunchStudioPage() {
                   >
                     使用安全提示詞重試動態
                   </button>
-                  <button
-                    onClick={handleRegenerateSaferKeyframe}
-                    disabled={slide1KeyframeStatus !== "generated"}
-                    style={{
-                      width: "100%", height: 36, borderRadius: 8,
-                      background: slide1KeyframeStatus !== "generated" ? "rgba(255,255,255,0.01)" : "rgba(255,255,255,0.04)",
-                      border: slide1KeyframeStatus !== "generated" ? "1px solid rgba(255,255,255,0.04)" : "1px solid rgba(255,255,255,0.1)",
-                      color: slide1KeyframeStatus !== "generated" ? "#6F675E" : "#CFC7BA",
-                      fontSize: 11, fontWeight: 700,
-                      cursor: slide1KeyframeStatus !== "generated" ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    重新生成更安全的首幀
-                  </button>
+                  {safeSelectedIndex === 0 && (
+                    <button
+                      onClick={handleRegenerateSaferKeyframe}
+                      disabled={selectedState.keyframeStatus !== "generated"}
+                      style={{
+                        width: "100%", height: 36, borderRadius: 8,
+                        background: selectedState.keyframeStatus !== "generated" ? "rgba(255,255,255,0.01)" : "rgba(255,255,255,0.04)",
+                        border: selectedState.keyframeStatus !== "generated" ? "1px solid rgba(255,255,255,0.04)" : "1px solid rgba(255,255,255,0.1)",
+                        color: selectedState.keyframeStatus !== "generated" ? "#6F675E" : "#CFC7BA",
+                        fontSize: 11, fontWeight: 700,
+                        cursor: selectedState.keyframeStatus !== "generated" ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      重新生成更安全的首幀
+                    </button>
+                  )}
                   <CopyButton text={SLIDE1_SAFE_RETRY_PROMPT} label="複製安全重試提示詞" />
                 </div>
               </div>
@@ -1955,13 +2125,13 @@ export default function FinalLaunchStudioPage() {
           </div>
 
           {/* Attempt History — client state only, last 3 attempts */}
-          {motionAttempts.length > 0 && (
+          {selectedState.motionAttempts.length > 0 && (
             <div style={{ marginTop: 14, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 10, padding: "12px 14px" }}>
               <p style={{ color: "#9B9387", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
-                嘗試記錄（最近 {motionAttempts.length} 次）
+                嘗試記錄（最近 {selectedState.motionAttempts.length} 次）
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {motionAttempts.map((a) => (
+                {selectedState.motionAttempts.map((a) => (
                   <div key={a.attempt_number} style={{ display: "flex", flexDirection: "column", gap: 3, background: "rgba(255,255,255,0.015)", borderRadius: 7, padding: "8px 10px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <span style={{ color: "#CFC7BA", fontSize: 10, fontWeight: 600 }}>#{a.attempt_number} — {a.prompt_mode === "safe" ? "安全提示詞" : "一般提示詞"}</span>
@@ -1988,38 +2158,38 @@ export default function FinalLaunchStudioPage() {
           )}
 
           {/* Step 3 — Provider Ratio Validation */}
-          {slide1MotionStatus === "generated" && (
+          {selectedState.motionStatus === "generated" && (
             <div style={{ marginTop: 14, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10, padding: "12px 14px" }}>
               <p style={{ color: "#9B9387", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
                 步驟 3｜來源比例驗證
               </p>
               <span style={{
                 display: "inline-block",
-                background: slide1ProviderRatioStatus === "accepted_intermediate" ? "rgba(249,115,22,0.08)" : slide1ProviderRatioStatus === "failed" ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.04)",
-                border: `1px solid ${slide1ProviderRatioStatus === "accepted_intermediate" ? "rgba(249,115,22,0.2)" : slide1ProviderRatioStatus === "failed" ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.08)"}`,
+                background: selectedState.providerRatioStatus === "accepted_intermediate" ? "rgba(249,115,22,0.08)" : selectedState.providerRatioStatus === "failed" ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.04)",
+                border: `1px solid ${selectedState.providerRatioStatus === "accepted_intermediate" ? "rgba(249,115,22,0.2)" : selectedState.providerRatioStatus === "failed" ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.08)"}`,
                 borderRadius: 6, padding: "3px 10px",
-                color: slide1ProviderRatioStatus === "accepted_intermediate" ? "#FB923C" : slide1ProviderRatioStatus === "failed" ? "#f87171" : "#9B9387",
+                color: selectedState.providerRatioStatus === "accepted_intermediate" ? "#FB923C" : selectedState.providerRatioStatus === "failed" ? "#f87171" : "#9B9387",
                 fontSize: 10, fontWeight: 700,
               }}>
-                {slide1ProviderRatioStatus === "accepted_intermediate"
+                {selectedState.providerRatioStatus === "accepted_intermediate"
                   ? "✓ 已接受中間比例"
-                  : slide1ProviderRatioStatus === "failed"
+                  : selectedState.providerRatioStatus === "failed"
                   ? "✗ 供應商比例驗證失敗｜非可接受的直式比例"
-                  : slide1ProviderRatioStatus === "validating"
-                  ? "⋯ 驗證供應商比例中…"
+                  : selectedState.providerRatioStatus === "unknown" && selectedState.motionStatus === "generated"
+                  ? "⋯ 等待影片中繼資料"
                   : "⋯ 等待影片中繼資料"}
               </span>
 
-              {slide1ProviderRatioStatus === "accepted_intermediate" && (
+              {selectedState.providerRatioStatus === "accepted_intermediate" && (
                 <div style={{ marginTop: 8 }}>
-                  {slide1ProviderRatioDims && (
+                  {selectedState.providerRatioDims && (
                     <p style={{ color: "#CFC7BA", fontSize: 9, fontFamily: "monospace", marginBottom: 4 }}>
-                      偵測到：{slide1ProviderRatioDims.width}×{slide1ProviderRatioDims.height} · 來源：中繼資料
+                      偵測到：{selectedState.providerRatioDims.width}×{selectedState.providerRatioDims.height} · 來源：中繼資料
                     </p>
                   )}
-                  {slide1ProviderRatioNote && (
+                  {selectedState.providerRatioNote && (
                     <p style={{ color: "#CFC7BA", fontSize: 9, lineHeight: 1.55, marginBottom: 4 }}>
-                      來源：Runway 申報比例 — {slide1ProviderRatioNote}
+                      來源：Runway 申報比例 — {selectedState.providerRatioNote}
                     </p>
                   )}
                   <p style={{ color: "#FB923C", fontSize: 10, lineHeight: 1.55 }}>
@@ -2028,101 +2198,95 @@ export default function FinalLaunchStudioPage() {
                 </div>
               )}
 
-              {slide1ProviderRatioStatus === "failed" && (
+              {selectedState.providerRatioStatus === "failed" && (
                 <p style={{ color: "#f87171", fontSize: 10, marginTop: 8, lineHeight: 1.55 }}>
                   供應商輸出比例不是可接受的直式中間比例，無法繼續進行最終合成。
-                </p>
-              )}
-
-              {slide1ProviderRatioStatus === "validating" && (
-                <p style={{ color: "#9B9387", fontSize: 10, marginTop: 8, lineHeight: 1.55 }}>
-                  讀取影片中繼資料中…8 秒後若無法取得將退回使用 Runway 申報比例。
                 </p>
               )}
             </div>
           )}
 
           {/* Step 4 — Final 4:5 Composition */}
-          {slide1ProviderRatioStatus === "accepted_intermediate" && (
-            <div style={{ marginTop: 14, background: effectiveFinalCompositionStatus === "composed" ? "rgba(34,197,94,0.04)" : "rgba(255,255,255,0.02)", border: `1px solid ${effectiveFinalCompositionStatus === "composed" ? "rgba(34,197,94,0.18)" : "rgba(249,115,22,0.12)"}`, borderRadius: 10, padding: "12px 14px" }}>
-              <p style={{ color: effectiveFinalCompositionStatus === "composed" ? "#4ade80" : "#FB923C", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
+          {selectedState.providerRatioStatus === "accepted_intermediate" && (
+            <div style={{ marginTop: 14, background: effectiveSelectedCompositionStatus === "composed" ? "rgba(34,197,94,0.04)" : "rgba(255,255,255,0.02)", border: `1px solid ${effectiveSelectedCompositionStatus === "composed" ? "rgba(34,197,94,0.18)" : "rgba(249,115,22,0.12)"}`, borderRadius: 10, padding: "12px 14px" }}>
+              <p style={{ color: effectiveSelectedCompositionStatus === "composed" ? "#4ade80" : "#FB923C", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
                 步驟 4｜最終 4:5 合成（1080×1350）
               </p>
-              {effectiveFinalCompositionStatus !== "composed" && (
+              {effectiveSelectedCompositionStatus !== "composed" && (
                 <p style={{ color: "#CFC7BA", fontSize: 11, lineHeight: 1.65, marginBottom: 10 }}>
                   使用 ffmpeg 將 Runway 影片縮放至 1080×1350 並燒入中文文字疊加，輸出 H.264 MP4。
                 </p>
               )}
-              {effectiveFinalCompositionStatus === "composed" && slide1FinalVideoUrl && (
+              {effectiveSelectedCompositionStatus === "composed" && selectedState.finalVideoUrl && (
                 <div style={{ marginBottom: 10 }}>
                   <p style={{ color: "#4ade80", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>✓ 最終 4:5 MP4 已生成</p>
-                  <p style={{ color: "#CFC7BA", fontSize: 9, fontFamily: "monospace" }}>{slide1FinalVideoUrl}</p>
+                  <p style={{ color: "#CFC7BA", fontSize: 9, fontFamily: "monospace" }}>{selectedState.finalVideoUrl}</p>
                 </div>
               )}
               <button
-                onClick={handleComposeFinalSlide1}
-                disabled={slide1CompositionStatus === "composing"}
+                onClick={() => handleComposeFinalSlide(safeSelectedIndex)}
+                disabled={selectedState.compositionStatus === "composing"}
                 style={{
                   width: "100%", height: 40, borderRadius: 10,
-                  background: slide1CompositionStatus === "composing" ? "rgba(255,255,255,0.02)" : effectiveFinalCompositionStatus === "composed" ? "rgba(34,197,94,0.07)" : "rgba(249,115,22,0.07)",
-                  border: slide1CompositionStatus === "composing" ? "1px solid rgba(255,255,255,0.06)" : effectiveFinalCompositionStatus === "composed" ? "1px solid rgba(34,197,94,0.22)" : "1px solid rgba(249,115,22,0.22)",
-                  color: slide1CompositionStatus === "composing" ? "#9B9387" : effectiveFinalCompositionStatus === "composed" ? "#4ade80" : "#FB923C",
+                  background: selectedState.compositionStatus === "composing" ? "rgba(255,255,255,0.02)" : effectiveSelectedCompositionStatus === "composed" ? "rgba(34,197,94,0.07)" : "rgba(249,115,22,0.07)",
+                  border: selectedState.compositionStatus === "composing" ? "1px solid rgba(255,255,255,0.06)" : effectiveSelectedCompositionStatus === "composed" ? "1px solid rgba(34,197,94,0.22)" : "1px solid rgba(249,115,22,0.22)",
+                  color: selectedState.compositionStatus === "composing" ? "#9B9387" : effectiveSelectedCompositionStatus === "composed" ? "#4ade80" : "#FB923C",
                   fontSize: 12, fontWeight: 700,
-                  cursor: slide1CompositionStatus === "composing" ? "not-allowed" : "pointer",
+                  cursor: selectedState.compositionStatus === "composing" ? "not-allowed" : "pointer",
                 }}
               >
-                {slide1CompositionStatus === "composing"
+                {selectedState.compositionStatus === "composing"
                   ? "合成最終 1080×1350 MP4 中…（30–60 秒）"
-                  : effectiveFinalCompositionStatus === "composed"
-                  ? "重新生成第 1 張最終 4:5 MP4"
-                  : "合成第 1 張最終 4:5 MP4（ffmpeg）"}
+                  : effectiveSelectedCompositionStatus === "composed"
+                  ? `重新生成第 ${selectedSlideNumber} 張最終 4:5 MP4`
+                  : `合成第 ${selectedSlideNumber} 張最終 4:5 MP4（ffmpeg）`}
               </button>
-              {slide1CompositionStatus === "failed" && slide1ComposingError && (
+              {selectedState.compositionStatus === "failed" && selectedState.composingError && (
                 <div style={{ marginTop: 8, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 8, padding: "10px 12px" }}>
                   <p style={{ color: "#f87171", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>合成失敗</p>
-                  <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.55 }}>{slide1ComposingError}</p>
+                  <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.55 }}>{selectedState.composingError}</p>
                 </div>
               )}
               <p style={{ color: "#9B9387", fontSize: 9, marginTop: 6 }}>
-                狀態：<span style={{ color: effectiveFinalCompositionStatus === "composed" ? "#4ade80" : slide1CompositionStatus === "failed" ? "#f87171" : "#FB923C", fontWeight: 700 }}>{effectiveFinalCompositionStatus === "composed" ? "已合成" : effectiveFinalCompositionStatus === "composing" ? "合成中" : effectiveFinalCompositionStatus === "needed" ? "待處理" : effectiveFinalCompositionStatus === "failed" ? "失敗" : "尚未產生"}</span>
+                狀態：<span style={{ color: effectiveSelectedCompositionStatus === "composed" ? "#4ade80" : selectedState.compositionStatus === "failed" ? "#f87171" : "#FB923C", fontWeight: 700 }}>{effectiveSelectedCompositionStatus === "composed" ? "已合成" : effectiveSelectedCompositionStatus === "composing" ? "合成中" : effectiveSelectedCompositionStatus === "needed" ? "待處理" : effectiveSelectedCompositionStatus === "failed" ? "失敗" : "尚未產生"}</span>
               </p>
             </div>
           )}
 
           {/* Pipeline status summary — 5 rows */}
           <div style={{ marginTop: 14, background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 10, padding: "10px 14px" }}>
-            <p style={{ color: "#9B9387", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 8 }}>第 1 張｜流程狀態</p>
+            <p style={{ color: "#9B9387", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 8 }}>第 {selectedSlideNumber} 張｜流程狀態</p>
             {(
               [
                 {
                   label: "首幀圖",
-                  value: slide1KeyframeStatus === "generated" ? "已產生" : slide1KeyframeStatus === "generating" ? "生成中" : slide1KeyframeStatus === "failed" ? "失敗" : "尚未產生",
-                  pass: slide1KeyframeStatus === "generated",
-                  fail: slide1KeyframeStatus === "failed",
+                  value: selectedState.keyframeStatus === "generated" ? "已產生" : selectedState.keyframeStatus === "generating" ? "生成中" : selectedState.keyframeStatus === "failed" ? "失敗" : "尚未產生",
+                  pass: selectedState.keyframeStatus === "generated",
+                  fail: selectedState.keyframeStatus === "failed",
                 },
                 {
                   label: "Runway 動態背景",
-                  value: slide1MotionStatus === "generated" ? "已產生" : slide1MotionStatus === "generating" ? "生成中" : slide1MotionStatus === "failed" ? "失敗" : "尚未產生",
-                  pass: slide1MotionStatus === "generated",
-                  fail: slide1MotionStatus === "failed",
+                  value: selectedState.motionStatus === "generated" ? "已產生" : selectedState.motionStatus === "generating" ? "生成中" : selectedState.motionStatus === "failed" ? "失敗" : "尚未產生",
+                  pass: selectedState.motionStatus === "generated",
+                  fail: selectedState.motionStatus === "failed",
                 },
                 {
                   label: "來源比例",
-                  value: slide1ProviderRatioStatus === "accepted_intermediate" ? "已接受中間素材" : slide1ProviderRatioStatus === "failed" ? "失敗" : slide1ProviderRatioStatus === "validating" ? "驗證中" : "尚未驗證",
-                  pass: slide1ProviderRatioStatus === "accepted_intermediate",
-                  fail: slide1ProviderRatioStatus === "failed",
+                  value: selectedState.providerRatioStatus === "accepted_intermediate" ? "已接受中間素材" : selectedState.providerRatioStatus === "failed" ? "失敗" : "尚未驗證",
+                  pass: selectedState.providerRatioStatus === "accepted_intermediate",
+                  fail: selectedState.providerRatioStatus === "failed",
                 },
                 {
                   label: "最終合成",
-                  value: effectiveFinalCompositionStatus === "composed" ? "已合成" : effectiveFinalCompositionStatus === "composing" ? "合成中" : effectiveFinalCompositionStatus === "needed" ? "待處理" : effectiveFinalCompositionStatus === "failed" ? "失敗" : "尚未產生",
-                  pass: effectiveFinalCompositionStatus === "composed",
-                  fail: slide1CompositionStatus === "failed",
+                  value: effectiveSelectedCompositionStatus === "composed" ? "已合成" : effectiveSelectedCompositionStatus === "composing" ? "合成中" : effectiveSelectedCompositionStatus === "needed" ? "待處理" : effectiveSelectedCompositionStatus === "failed" ? "失敗" : "尚未產生",
+                  pass: effectiveSelectedCompositionStatus === "composed",
+                  fail: selectedState.compositionStatus === "failed",
                 },
                 {
                   label: "最終比例",
-                  value: slide1FinalRatioStatus === "passed_4_5" ? "通過 4:5" : slide1FinalRatioStatus === "failed" ? "失敗" : "尚未驗證",
-                  pass: slide1FinalRatioStatus === "passed_4_5",
-                  fail: slide1FinalRatioStatus === "failed",
+                  value: selectedState.finalRatioStatus === "passed_4_5" ? "通過 4:5" : "尚未驗證",
+                  pass: selectedState.finalRatioStatus === "passed_4_5",
+                  fail: false,
                 },
               ] as { label: string; value: string; pass: boolean; fail: boolean }[]
             ).map((row) => (
@@ -2169,7 +2333,7 @@ export default function FinalLaunchStudioPage() {
                 <div
                   key={i}
                   onClick={() => setSelectedMotionSlide(i)}
-                  style={{ display: "flex", alignItems: "center", gap: 10, background: isReady ? "rgba(34,197,94,0.04)" : "rgba(255,255,255,0.015)", border: `1px solid ${isReady ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.05)"}`, borderRadius: 10, padding: "9px 13px", cursor: "pointer" }}
+                  style={{ display: "flex", alignItems: "center", gap: 10, background: i === selectedMotionSlide ? "rgba(249,115,22,0.05)" : isReady ? "rgba(34,197,94,0.04)" : "rgba(255,255,255,0.015)", border: `1.5px solid ${i === selectedMotionSlide ? "rgba(249,115,22,0.30)" : isReady ? "rgba(34,197,94,0.12)" : "rgba(255,255,255,0.05)"}`, borderRadius: 10, padding: "9px 13px", cursor: "pointer" }}
                 >
                   <span style={{ color: "#9B9387", fontSize: 10, fontFamily: "monospace", fontWeight: 700, flexShrink: 0 }}>{String(s.slide_number).padStart(2, "0")}</span>
                   <RoleBadge label={s.role_label} />
