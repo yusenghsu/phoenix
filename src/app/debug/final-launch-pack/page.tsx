@@ -437,14 +437,17 @@ function MotionPreviewPanel({
   selectedSlide,
   onSelect,
   motionVideoUrls,
+  finalVideoUrls,
 }: {
   slides: LaunchSlide[];
   selectedSlide: number;
   onSelect: (i: number) => void;
   motionVideoUrls: Record<number, string>;
+  finalVideoUrls?: Record<number, string>;
 }) {
   const current = slides[selectedSlide];
-  const currentVideoUrl = motionVideoUrls[selectedSlide] ?? current.motion_asset.background_video_url;
+  // Prefer final composed video; fall back to intermediate
+  const currentVideoUrl = finalVideoUrls?.[selectedSlide] ?? motionVideoUrls[selectedSlide] ?? current.motion_asset.background_video_url;
   return (
     <div style={{ marginBottom: 24 }}>
       <div style={{ marginBottom: 12 }}>
@@ -458,6 +461,7 @@ function MotionPreviewPanel({
           slide={current}
           videoUrl={currentVideoUrl}
           size="featured"
+          isFinalComposed={!!finalVideoUrls?.[selectedSlide]}
         />
       </div>
 
@@ -1088,7 +1092,9 @@ export default function FinalLaunchStudioPage() {
   const [slide1ProviderRatioNote, setSlide1ProviderRatioNote] = useState<string | undefined>(undefined);
   const [slide1ProviderRatioDims, setSlide1ProviderRatioDims] = useState<{ width: number; height: number } | undefined>(undefined);
   const [slide1CompositionStatus, setSlide1CompositionStatus] = useState<"missing" | "needed" | "composing" | "composed" | "failed">("missing");
-  const [slide1FinalRatioStatus] = useState<RatioStatus>("unknown"); // updated once final MP4 composition exists
+  const [slide1FinalRatioStatus, setSlide1FinalRatioStatus] = useState<RatioStatus>("unknown");
+  const [slide1FinalVideoUrl, setSlide1FinalVideoUrl] = useState<string | undefined>(undefined);
+  const [slide1ComposingError, setSlide1ComposingError] = useState<string | undefined>(undefined);
   const [motionAttempts, setMotionAttempts] = useState<MotionAttempt[]>([]);
   const attemptCountRef = useRef(0);
   const [hasSavedAssets, setHasSavedAssets] = useState(false);
@@ -1322,6 +1328,33 @@ export default function FinalLaunchStudioPage() {
     }
   }, []);
 
+  // Step 4: compose final 1080×1350 MP4 with Chinese text overlay
+  const handleComposeFinalSlide1 = useCallback(async () => {
+    setSlide1CompositionStatus("composing");
+    setSlide1ComposingError(undefined);
+    try {
+      const res = await fetch("/api/debug/final-launch/compose-slide-01", { method: "POST" });
+      const data = (await res.json()) as {
+        status: string;
+        final_video_url?: string;
+        final_ratio_status?: string;
+        error?: string;
+      };
+      if (data.status === "composed" && data.final_video_url) {
+        setSlide1FinalVideoUrl(data.final_video_url);
+        setSlide1CompositionStatus("composed");
+        setSlide1FinalRatioStatus("passed_4_5");
+        setHasSavedAssets(true);
+      } else {
+        setSlide1ComposingError(data.error ?? "Composition failed.");
+        setSlide1CompositionStatus("failed");
+      }
+    } catch (err) {
+      setSlide1ComposingError(err instanceof Error ? err.message : String(err));
+      setSlide1CompositionStatus("failed");
+    }
+  }, []);
+
   // Recover an existing successful Runway task by task ID
   const handleRecoverRunwayTask = useCallback(async () => {
     if (!recoverTaskId.trim()) return;
@@ -1372,7 +1405,18 @@ export default function FinalLaunchStudioPage() {
     try {
       const res = await fetch("/api/debug/final-launch/manifest");
       if (!res.ok) return;
-      const data = (await res.json()) as { status: string; manifest?: { slide_01?: { keyframe_url?: string; runway_intermediate_video_url?: string; final_composition_status?: string } } };
+      const data = (await res.json()) as {
+        status: string;
+        manifest?: {
+          slide_01?: {
+            keyframe_url?: string;
+            runway_intermediate_video_url?: string;
+            final_composition_status?: string;
+            final_video_url?: string;
+            final_ratio_status?: string;
+          }
+        }
+      };
       const slide01 = data.manifest?.slide_01;
       if (!slide01) { setHasSavedAssets(false); return; }
       setHasSavedAssets(true);
@@ -1384,9 +1428,17 @@ export default function FinalLaunchStudioPage() {
         setMotionVideoUrls((prev) => ({ ...prev, 0: slide01.runway_intermediate_video_url! }));
         setSlide1MotionStatus("generated");
         setSelectedMotionSlide(0);
-        if (slide01.final_composition_status === "needed") {
-          setSlide1CompositionStatus("needed");
-        }
+        const compStatus = slide01.final_composition_status;
+        if (compStatus === "composed") setSlide1CompositionStatus("composed");
+        else if (compStatus === "needed") setSlide1CompositionStatus("needed");
+      }
+      if (slide01.final_video_url) {
+        setSlide1FinalVideoUrl(slide01.final_video_url);
+        // final_video_url existing means composition completed — override any stale status
+        setSlide1CompositionStatus("composed");
+      }
+      if (slide01.final_ratio_status === "passed_4_5") {
+        setSlide1FinalRatioStatus("passed_4_5");
       }
     } catch {
       // Manifest fetch failed — non-critical, start fresh
@@ -1415,6 +1467,9 @@ export default function FinalLaunchStudioPage() {
     setSlide1ProviderRatioNote(undefined);
     setSlide1ProviderRatioDims(undefined);
     setSlide1CompositionStatus("missing");
+    setSlide1FinalVideoUrl(undefined);
+    setSlide1FinalRatioStatus("unknown");
+    setSlide1ComposingError(undefined);
     setMotionVideoUrls((prev) => { const next = { ...prev }; delete next[0]; return next; });
     setMotionAttempts([]);
     attemptCountRef.current = 0;
@@ -1482,6 +1537,12 @@ export default function FinalLaunchStudioPage() {
       video.src = "";
     };
   }, [slide1VideoUrl]);
+
+  // Derived: final_video_url + passed_4_5 always means composed — immune to ratio validation race
+  const effectiveFinalCompositionStatus: "missing" | "needed" | "composing" | "composed" | "failed" =
+    slide1FinalVideoUrl && slide1FinalRatioStatus === "passed_4_5"
+      ? "composed"
+      : slide1CompositionStatus;
 
   return (
     <div style={{ minHeight: "100vh", background: "#0C0A08", padding: "40px 16px 100px" }}>
@@ -1879,18 +1940,47 @@ export default function FinalLaunchStudioPage() {
 
           {/* Step 4 — Final 4:5 Composition */}
           {slide1ProviderRatioStatus === "accepted_intermediate" && (
-            <div style={{ marginTop: 14, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(249,115,22,0.12)", borderRadius: 10, padding: "12px 14px" }}>
-              <p style={{ color: "#FB923C", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
+            <div style={{ marginTop: 14, background: effectiveFinalCompositionStatus === "composed" ? "rgba(34,197,94,0.04)" : "rgba(255,255,255,0.02)", border: `1px solid ${effectiveFinalCompositionStatus === "composed" ? "rgba(34,197,94,0.18)" : "rgba(249,115,22,0.12)"}`, borderRadius: 10, padding: "12px 14px" }}>
+              <p style={{ color: effectiveFinalCompositionStatus === "composed" ? "#4ade80" : "#FB923C", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
                 Step 4 — Final 4:5 Composition (1080×1350)
               </p>
-              <p style={{ color: "#52504E", fontSize: 11, lineHeight: 1.65, marginBottom: 10 }}>
-                Runway intermediate motion generated. Final 1080×1350 composition is still required — compose the Runway clip into a 4:5 MP4 before this slide can be marked ready.
-              </p>
-              <button disabled style={{ width: "100%", height: 38, borderRadius: 10, background: "rgba(255,255,255,0.01)", border: "1px solid rgba(255,255,255,0.05)", color: "#252220", fontSize: 11, fontWeight: 700, cursor: "not-allowed" }}>
-                Compose Final 4:5 MP4 — Not yet implemented
+              {effectiveFinalCompositionStatus !== "composed" && (
+                <p style={{ color: "#52504E", fontSize: 11, lineHeight: 1.65, marginBottom: 10 }}>
+                  Scale Runway clip to 1080×1350 and burn Chinese text overlay using ffmpeg. Outputs H.264 MP4.
+                </p>
+              )}
+              {effectiveFinalCompositionStatus === "composed" && slide1FinalVideoUrl && (
+                <div style={{ marginBottom: 10 }}>
+                  <p style={{ color: "#4ade80", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>✓ Final 4:5 MP4 generated</p>
+                  <p style={{ color: "#52504E", fontSize: 9, fontFamily: "monospace" }}>{slide1FinalVideoUrl}</p>
+                </div>
+              )}
+              <button
+                onClick={handleComposeFinalSlide1}
+                disabled={slide1CompositionStatus === "composing"}
+                style={{
+                  width: "100%", height: 40, borderRadius: 10,
+                  background: slide1CompositionStatus === "composing" ? "rgba(255,255,255,0.02)" : effectiveFinalCompositionStatus === "composed" ? "rgba(34,197,94,0.07)" : "rgba(249,115,22,0.07)",
+                  border: slide1CompositionStatus === "composing" ? "1px solid rgba(255,255,255,0.06)" : effectiveFinalCompositionStatus === "composed" ? "1px solid rgba(34,197,94,0.22)" : "1px solid rgba(249,115,22,0.22)",
+                  color: slide1CompositionStatus === "composing" ? "#3E3B37" : effectiveFinalCompositionStatus === "composed" ? "#4ade80" : "#FB923C",
+                  fontSize: 12, fontWeight: 700,
+                  cursor: slide1CompositionStatus === "composing" ? "not-allowed" : "pointer",
+                }}
+              >
+                {slide1CompositionStatus === "composing"
+                  ? "Composing final 1080×1350 MP4… (30–60s)"
+                  : effectiveFinalCompositionStatus === "composed"
+                  ? "Regenerate Slide 1 Final 4:5 MP4"
+                  : "Compose Slide 1 Final 4:5 MP4 (ffmpeg)"}
               </button>
+              {slide1CompositionStatus === "failed" && slide1ComposingError && (
+                <div style={{ marginTop: 8, background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 8, padding: "10px 12px" }}>
+                  <p style={{ color: "#f87171", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>Composition failed</p>
+                  <p style={{ color: "#52504E", fontSize: 10, lineHeight: 1.55 }}>{slide1ComposingError}</p>
+                </div>
+              )}
               <p style={{ color: "#252220", fontSize: 9, marginTop: 6 }}>
-                Final composition status: <span style={{ color: slide1CompositionStatus === "composed" ? "#4ade80" : "#FB923C" }}>{slide1CompositionStatus}</span>
+                Status: <span style={{ color: effectiveFinalCompositionStatus === "composed" ? "#4ade80" : slide1CompositionStatus === "failed" ? "#f87171" : "#FB923C", fontWeight: 700 }}>{effectiveFinalCompositionStatus}</span>
               </p>
             </div>
           )}
@@ -1920,8 +2010,8 @@ export default function FinalLaunchStudioPage() {
                 },
                 {
                   label: "Final Composition",
-                  value: slide1CompositionStatus,
-                  pass: slide1CompositionStatus === "composed",
+                  value: effectiveFinalCompositionStatus,
+                  pass: effectiveFinalCompositionStatus === "composed",
                   fail: slide1CompositionStatus === "failed",
                 },
                 {
@@ -1970,6 +2060,7 @@ export default function FinalLaunchStudioPage() {
           selectedSlide={selectedMotionSlide}
           onSelect={setSelectedMotionSlide}
           motionVideoUrls={motionVideoUrls}
+          finalVideoUrls={slide1FinalVideoUrl ? { 0: slide1FinalVideoUrl } : undefined}
         />
 
         {/* ── Per-Slide Motion Status ───────────────────────────── */}

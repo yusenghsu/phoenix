@@ -31,6 +31,7 @@ export async function DELETE() {
   const filesToDelete = [
     "slide-01-keyframe.png",
     "slide-01-runway-intermediate.mp4",
+    "slide-01-final.mp4",
   ];
 
   for (const filename of filesToDelete) {

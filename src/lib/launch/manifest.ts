@@ -23,8 +23,9 @@ export interface ManifestSlide01 {
   provider_requested_ratio: "832:1104";
   provider_ratio_status: "accepted_intermediate" | "unknown";
   provider_ratio_source: "declared_runway_request_ratio" | "metadata" | "unknown";
-  final_composition_status: "needed" | "missing";
-  final_ratio_status: "unknown";
+  final_composition_status: "needed" | "missing" | "composed";
+  final_video_url?: string;
+  final_ratio_status: "unknown" | "passed_4_5";
   updated_at: string;
 }
 

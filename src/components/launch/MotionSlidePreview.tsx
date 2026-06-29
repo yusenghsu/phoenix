@@ -108,9 +108,10 @@ interface Props {
   videoUrl?: string;
   size?: "featured" | "thumbnail";
   exportMode?: boolean;
+  isFinalComposed?: boolean;
 }
 
-export default function MotionSlidePreview({ slide, videoUrl, size = "featured", exportMode = false }: Props) {
+export default function MotionSlidePreview({ slide, videoUrl, size = "featured", exportMode = false, isFinalComposed = false }: Props) {
   const isFeatured = size === "featured";
   const s = SIZE[size];
 
@@ -145,72 +146,88 @@ export default function MotionSlidePreview({ slide, videoUrl, size = "featured",
         style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center" }}
       />
 
-      {/* Layer 2: Overlay mask */}
-      <div style={{ position: "absolute", inset: 0, background: overlayBg }} />
+      {/* Layers 2-6: suppressed when playing final composed MP4 (text already burned in) */}
+      {!isFinalComposed && (
+        <>
+          {/* Layer 2: Overlay mask */}
+          <div style={{ position: "absolute", inset: 0, background: overlayBg }} />
 
-      {/* Layer 3: Vignette */}
-      <div style={{ position: "absolute", inset: 0, background: VIGNETTE }} />
+          {/* Layer 3: Vignette */}
+          <div style={{ position: "absolute", inset: 0, background: VIGNETTE }} />
 
-      {/* Layer 4: Split-tension divider */}
-      {t.template === "split-tension" && (
-        <div style={{ position: "absolute", top: "10%", bottom: "12%", left: "50%", width: 1, background: "rgba(255,255,255,0.06)" }} />
+          {/* Layer 4: Split-tension divider */}
+          {t.template === "split-tension" && (
+            <div style={{ position: "absolute", top: "10%", bottom: "12%", left: "50%", width: 1, background: "rgba(255,255,255,0.06)" }} />
+          )}
+
+          {/* Layer 5: Text block */}
+          <div style={{
+            position: "absolute",
+            left: pos.left,
+            top: pos.top,
+            bottom: pos.bottom,
+            width: pos.width,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: selfAlign,
+          }}>
+            {/* Slide number + role label */}
+            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: s.gap }}>
+              <span style={{ color: "rgba(249,115,22,0.28)", fontSize: s.numPx, fontFamily: "monospace", fontWeight: 600 }}>
+                {String(slide.slide_number).padStart(2, "0")}
+              </span>
+              <span style={{ color: "rgba(255,255,255,0.14)", fontSize: s.rolePx, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                {slide.role_label}
+              </span>
+            </div>
+
+            {/* Main copy — line by line, fixed Chinese line breaks */}
+            <div style={{ marginBottom: s.gap }}>
+              {mainLines.map((line, i) => (
+                <p key={i} style={{ margin: "0 0 2px 0", fontSize: s.mainPx, fontWeight: 800, lineHeight: 1.22, letterSpacing: "-0.025em", textAlign }}>
+                  <HighlightedLine text={line} words={slide.highlight_words} />
+                </p>
+              ))}
+            </div>
+
+            {/* Accent divider */}
+            <div style={{ width: s.dividerW, height: 1.5, background: "rgba(249,115,22,0.28)", borderRadius: 2, marginBottom: s.gap, alignSelf: selfAlign }} />
+
+            {/* Support copy — line by line */}
+            <div>
+              {supportLines.map((line, i) => (
+                <p key={i} style={{ margin: "0 0 1px 0", color: "rgba(250,250,249,0.56)", fontSize: s.supportPx, fontWeight: 400, lineHeight: 1.65, textAlign }}>
+                  {line}
+                </p>
+              ))}
+            </div>
+          </div>
+
+          {/* Layer 6: Footer */}
+          <div style={{ position: "absolute", bottom: "5%", left: "8%", right: "8%", paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+            <p style={{ color: "rgba(249,115,22,0.16)", fontSize: s.footerPx, fontWeight: 600, letterSpacing: "0.07em", textAlign: pos.center ? "center" : "left" }}>
+              小佑老師｜保險新人真話
+            </p>
+          </div>
+        </>
       )}
 
-      {/* Layer 5: Text block */}
-      <div style={{
-        position: "absolute",
-        left: pos.left,
-        top: pos.top,
-        bottom: pos.bottom,
-        width: pos.width,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: selfAlign,
-      }}>
-        {/* Slide number + role label */}
-        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: s.gap }}>
-          <span style={{ color: "rgba(249,115,22,0.28)", fontSize: s.numPx, fontFamily: "monospace", fontWeight: 600 }}>
-            {String(slide.slide_number).padStart(2, "0")}
-          </span>
-          <span style={{ color: "rgba(255,255,255,0.14)", fontSize: s.rolePx, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>
-            {slide.role_label}
-          </span>
-        </div>
-
-        {/* Main copy — line by line, fixed Chinese line breaks */}
-        <div style={{ marginBottom: s.gap }}>
-          {mainLines.map((line, i) => (
-            <p key={i} style={{ margin: "0 0 2px 0", fontSize: s.mainPx, fontWeight: 800, lineHeight: 1.22, letterSpacing: "-0.025em", textAlign }}>
-              <HighlightedLine text={line} words={slide.highlight_words} />
-            </p>
-          ))}
-        </div>
-
-        {/* Accent divider */}
-        <div style={{ width: s.dividerW, height: 1.5, background: "rgba(249,115,22,0.28)", borderRadius: 2, marginBottom: s.gap, alignSelf: selfAlign }} />
-
-        {/* Support copy — line by line */}
-        <div>
-          {supportLines.map((line, i) => (
-            <p key={i} style={{ margin: "0 0 1px 0", color: "rgba(250,250,249,0.56)", fontSize: s.supportPx, fontWeight: 400, lineHeight: 1.65, textAlign }}>
-              {line}
-            </p>
-          ))}
-        </div>
-      </div>
-
-      {/* Layer 6: Footer */}
-      <div style={{ position: "absolute", bottom: "5%", left: "8%", right: "8%", paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-        <p style={{ color: "rgba(249,115,22,0.16)", fontSize: s.footerPx, fontWeight: 600, letterSpacing: "0.07em", textAlign: pos.center ? "center" : "left" }}>
-          小佑老師｜保險新人真話
-        </p>
-      </div>
-
-      {/* Motion badge — featured, non-export */}
+      {/* Badge */}
       {isFeatured && !exportMode && (
-        <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 6, padding: "3px 8px" }}>
-          <span style={{ color: "#60a5fa", fontSize: 8, fontWeight: 700, letterSpacing: "0.08em" }}>MOTION PREVIEW</span>
-        </div>
+        isFinalComposed ? (
+          <div style={{ position: "absolute", top: 12, right: 12, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+            <div style={{ background: "rgba(34,197,94,0.14)", border: "1px solid rgba(34,197,94,0.30)", borderRadius: 6, padding: "3px 8px" }}>
+              <span style={{ color: "#4ade80", fontSize: 8, fontWeight: 700, letterSpacing: "0.08em" }}>FINAL COMPOSED MP4</span>
+            </div>
+            <div style={{ background: "rgba(0,0,0,0.45)", borderRadius: 4, padding: "2px 6px" }}>
+              <span style={{ color: "rgba(255,255,255,0.38)", fontSize: 7, fontWeight: 500, letterSpacing: "0.05em" }}>Text burned in · no HTML overlay</span>
+            </div>
+          </div>
+        ) : (
+          <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 6, padding: "3px 8px" }}>
+            <span style={{ color: "#60a5fa", fontSize: 8, fontWeight: 700, letterSpacing: "0.08em" }}>MOTION PREVIEW</span>
+          </div>
+        )
       )}
     </div>
   );
