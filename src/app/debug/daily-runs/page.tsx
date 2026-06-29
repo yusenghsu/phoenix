@@ -517,7 +517,13 @@ export default function DailyRunsDebugPage() {
         {/* Cron Test Panel */}
         <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 18px", marginTop: 24 }}>
           <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Cron Test Panel</p>
-          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 14 }}>Debug only. Calls OpenAI for 03:00 ideas. Does not call LINE, Runway, or Instagram.</p>
+          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 10 }}>Debug only. Calls OpenAI for 03:00 ideas. Does not call LINE, Runway, or Instagram.</p>
+          {/* Stuck state warning */}
+          {run && run.status === "ideas_generating" && (!details || details.candidates.length === 0) && (
+            <div style={{ marginBottom: 12, padding: "8px 12px", background: "rgba(249,115,22,0.07)", border: "1px solid rgba(249,115,22,0.22)", borderRadius: 9 }}>
+              <p style={{ color: "#FB923C", fontSize: 11, fontWeight: 600 }}>⚠ 主題生成可能卡住，請使用「重新產生今日 5 個主題候選（Debug）」</p>
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {(
               [

@@ -64,7 +64,14 @@ function buildError(opts: {
 // ── daily-ideas ───────────────────────────────────────────────────────────────
 // Generates 5 topic candidates via OpenAI (or demo fallback) then waits for selection.
 // No LINE, no Runway, no images, no Instagram.
-// force=true: deletes existing candidates + resets run to idle before regenerating.
+//
+// Decision order:
+//  1. Count existing candidates
+//  2. force=true → always delete + reset + regenerate (not blocked by any status)
+//  3. candidates >= 5 → advance to waiting_for_selection, skip
+//  4. status=ideas_generating + 0 candidates → stale check (devMode always recovers)
+//  5. status=idle → generate
+//  6. any other status → skip
 
 export async function runDailyIdeas(devMode: boolean, force = false): Promise<CronRunResult> {
   const runDate = getTaiwanRunDate();
@@ -74,6 +81,7 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
   try {
     let run = await getOrCreateDailyRun(runDate);
     runId = run.id;
+    const db = createServerClient();
 
     stage = "log_triggered_event";
     await logCronTriggered({
@@ -84,28 +92,102 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
       payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status, force },
     });
 
-    // Force: delete existing candidates + reset run to idle
-    if (force) {
-      stage = "force_delete_candidates";
-      const deleted = await deleteRunCandidates(run.id);
-      stage = "force_reset_run";
-      run = await forceResetRunForRegeneration(run.id);
-      await logCronTriggered({
-        runId: run.id,
-        jobType: "daily_ideas",
-        status: "force_regenerated",
-        message: `Force regenerate: deleted ${deleted} existing candidates, run reset to idle`,
-        payload: { run_date: runDate, deleted_count: deleted },
-      });
+    // Count existing candidates — this drives all decisions below
+    stage = "count_existing_candidates";
+    let existingCount = 0;
+    if (db) {
+      const { data: existing } = await db
+        .from("phoenix_topic_candidates")
+        .select("id")
+        .eq("run_id", run.id);
+      existingCount = existing?.length ?? 0;
     }
 
-    // Non-idle status — skip
-    if (run.status !== "idle") {
+    // ── FORCE PATH: ignore status, always regenerate ──────────────────────────
+    if (force) {
       await logCronTriggered({
         runId: run.id,
         jobType: "daily_ideas",
-        status: run.status === "waiting_for_selection" ? "already_waiting" : "skipped_non_idle",
-        message: `Run already in status: ${run.status} — skipping`,
+        status: "force_regenerate_requested",
+        message: `Force regenerate requested (current status: ${run.status}, existing candidates: ${existingCount})`,
+        payload: { run_date: runDate, previous_status: run.status, existing_count: existingCount },
+      });
+
+      stage = "force_delete_candidates";
+      const deleted = await deleteRunCandidates(run.id);
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_ideas",
+        status: "candidates_deleted",
+        message: `Deleted ${deleted} existing candidates`,
+        payload: { run_date: runDate, deleted_count: deleted },
+      });
+
+      stage = "force_reset_run";
+      run = await forceResetRunForRegeneration(run.id);
+      existingCount = 0;
+      // Fall through to generation below
+    }
+    // ── NORMAL PATH: decisions based on candidate count + status ─────────────
+    else if (existingCount >= 5) {
+      // Already have enough candidates — advance status and skip
+      if (["idle", "ideas_generating", "ideas_ready"].includes(run.status)) {
+        await updateRunStatus(run.id, "waiting_for_selection");
+      }
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_ideas",
+        status: "skipped_existing_candidates",
+        message: `Already have ${existingCount} candidates — advancing to waiting_for_selection`,
+        payload: { run_date: runDate, candidate_count: existingCount },
+      });
+      return {
+        ok: true,
+        job_type: "daily_ideas",
+        status: "waiting_for_selection",
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: `Already have ${existingCount} candidates — waiting for selection`,
+        skipped: true,
+        existing_candidate_count: existingCount,
+      };
+    } else if (run.status === "ideas_generating" && existingCount === 0) {
+      // Stuck in ideas_generating with no candidates — check if stale
+      const updatedAt = run.updated_at ? new Date(run.updated_at).getTime() : 0;
+      const staleThresholdMs = 2 * 60 * 1000;
+      const isStale = Date.now() - updatedAt > staleThresholdMs;
+
+      if (isStale || devMode) {
+        // Dev always recovers; production recovers after 2 min
+        run = await updateRunStatus(run.id, "idle");
+        await logCronTriggered({
+          runId: run.id,
+          jobType: "daily_ideas",
+          status: "stale_recovered",
+          message: "Recovered stale ideas_generating run with no candidates",
+          payload: { run_date: runDate, stale: isStale, dev_mode: devMode },
+        });
+        // Fall through to generation below
+      } else {
+        // Production: generation started < 2 min ago — let it complete
+        return {
+          ok: true,
+          job_type: "daily_ideas",
+          status: "ideas_generating",
+          run_date: runDate,
+          run_id: run.id,
+          dev_mode: devMode,
+          message: "Generation already in progress (started < 2 min ago)",
+        };
+      }
+    } else if (run.status !== "idle") {
+      // Any other non-idle, non-stuck status — skip
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_ideas",
+        status: "skipped_non_idle",
+        message: `Run in status: ${run.status} — skipping`,
         payload: { run_date: runDate },
       });
       return {
@@ -119,37 +201,9 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
         skipped: true,
       };
     }
+    // else: run.status === "idle" → fall through to generation
 
-    // Check for existing candidates (avoid re-burning OpenAI without force)
-    stage = "check_existing_candidates";
-    const db = createServerClient();
-    if (db) {
-      const { data: existing } = await db
-        .from("phoenix_topic_candidates")
-        .select("id")
-        .eq("run_id", run.id);
-      if (existing && existing.length >= 5) {
-        await updateRunStatus(run.id, "waiting_for_selection");
-        await logCronTriggered({
-          runId: run.id,
-          jobType: "daily_ideas",
-          status: "skipped_existing_candidates",
-          message: `Already have ${existing.length} candidates — advancing to waiting_for_selection`,
-          payload: { run_date: runDate, candidate_count: existing.length },
-        });
-        return {
-          ok: true,
-          job_type: "daily_ideas",
-          status: "waiting_for_selection",
-          run_date: runDate,
-          run_id: run.id,
-          dev_mode: devMode,
-          message: `Already have ${existing.length} candidates — waiting for selection`,
-          skipped: true,
-          existing_candidate_count: existing.length,
-        };
-      }
-    }
+    // ── GENERATION PHASE (reached by force, stale recovery, or idle) ──────────
 
     // Load brand profile
     stage = "load_brand_profile";
@@ -178,9 +232,10 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
     stage = "update_status_ideas_generating";
     await updateRunStatus(run.id, "ideas_generating", {
       cron_triggered_at: new Date().toISOString(),
+      force: force || undefined,
     });
 
-    // Generate candidates (OpenAI or demo fallback — never throws)
+    // Generate candidates via OpenAI (fallback to demo — never throws)
     stage = "generate_candidates";
     const result = await generateDailyTopicCandidates({
       runDate,
@@ -218,10 +273,10 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
       jobType: "daily_ideas",
       status: "candidates_generated",
       message: `${result.candidates.length} topic candidates generated and saved${result.usedFallback ? " (demo fallback)" : ""}`,
-      payload: { run_date: runDate, count: result.candidates.length, used_fallback: result.usedFallback },
+      payload: { run_date: runDate, count: result.candidates.length, used_fallback: result.usedFallback, force },
     });
 
-    // Advance to ideas_ready then waiting_for_selection
+    // Advance to ideas_ready → waiting_for_selection
     stage = "update_status_ideas_ready";
     await updateRunStatus(run.id, "ideas_ready");
 
@@ -232,7 +287,7 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
       jobType: "daily_ideas",
       status: "waiting_for_selection",
       message: "Run is now waiting for topic selection",
-      payload: { run_date: runDate },
+      payload: { run_date: runDate, force },
     });
 
     return {
@@ -245,6 +300,7 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
       message: `${result.candidates.length} candidates generated${result.usedFallback ? " (demo fallback)" : ""} — waiting for selection`,
       candidate_count: result.candidates.length,
       used_fallback: result.usedFallback,
+      force_regenerated: force,
     };
 
   } catch (err) {
@@ -261,7 +317,7 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
           job_type: "daily_ideas",
           status: "failed",
           message: err instanceof Error ? err.message : String(err),
-          payload: { stage, error: true, run_date: runDate },
+          payload: { stage, error: true, run_date: runDate, force },
         });
       } catch { /* don't mask the real error */ }
     }
