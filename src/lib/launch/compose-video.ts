@@ -5,6 +5,7 @@
 import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
+import type { SlideComposeText } from "./slide-motion-config";
 
 // Candidate Chinese-capable fonts on macOS — tried in order
 const CHINESE_FONT_CANDIDATES = [
@@ -13,7 +14,7 @@ const CHINESE_FONT_CANDIDATES = [
   "/System/Library/Fonts/STHeiti Medium.ttc",
   "/System/Library/Fonts/Supplemental/NotoSansSC-Regular.otf",
   "/Library/Fonts/Arial Unicode.ttf",
-  "/System/Library/Fonts/Helvetica.ttc",    // ASCII fallback
+  "/System/Library/Fonts/Helvetica.ttc",
   "/System/Library/Fonts/Apple Symbols.ttf",
 ];
 
@@ -51,7 +52,6 @@ function runFfmpeg(ffmpegBin: string, args: string[]): Promise<{ stderr: string 
 }
 
 // Escape a text string for ffmpeg drawtext filter.
-// ffmpeg drawtext escaping: backslash, colon, single-quote, percent need escaping.
 function escapeDT(text: string): string {
   return text
     .replace(/\\/g, "\\\\")
@@ -60,91 +60,66 @@ function escapeDT(text: string): string {
     .replace(/%/g, "\\%");
 }
 
-export interface Slide01TextContent {
-  mainLine1: string;        // first main line (white)
-  mainLine2a: string;       // first part of line 2 (white)
-  mainLine2b: string;       // highlighted part of line 2 (orange)
-  mainLine2c: string;       // last part of line 2 (white)
-  supportLine1: string;
-  supportLine2: string;
-  footerText: string;
-}
+// Text layout constants for 1080×1350 canvas
+const MAIN_SIZE = 52;
+const MAIN_LINE_HEIGHT = 76;
+const SUPPORT_SIZE = 27;
+const SUPPORT_LINE_HEIGHT = 38;
+const X = 60;
+const MAIN_Y = 200;
+const FOOTER_Y = 1302;
 
-// Default Slide 1 text derived from FINAL_LAUNCH_PACK slide 1
-export const SLIDE1_TEXT: Slide01TextContent = {
-  mainLine1:   "做保險，",
-  mainLine2a:  "真的會讓",
-  mainLine2b:  "朋友遠離",     // highlight_words
-  mainLine2c:  "你嗎？",
-  supportLine1: "很多新人還沒開始成交，",
-  supportLine2:  "心裡就先害怕被討厭。",
-  footerText:   "小佑老師｜保險新人真話",
-};
-
-// Compose Slide 1: scale Runway 832×1104 → 1080×1350, overlay Chinese text, output H.264 MP4.
-export async function composeSlide01(
+// Generic compose: works for any slide given a SlideComposeText descriptor.
+export async function composeSlide(
   inputVideoPath: string,
   outputVideoPath: string,
-  text: Slide01TextContent = SLIDE1_TEXT
+  text: SlideComposeText
 ): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const ffmpegBin: string | null = require("ffmpeg-static");
   if (!ffmpegBin) throw new Error("ffmpeg-static binary not found.");
 
   const fontFile = await resolveChinesesFont();
-
-  // Text layout — all positions are for 1080×1350 canvas
-  // Left-heavy: text in left ~55% (x=60 to ~600)
-  // Subject in right third — preserve right side free
-  const MAIN_SIZE = 52;
-  const MAIN_LINE_HEIGHT = 76;
-  const SUPPORT_SIZE = 27;
-  const SUPPORT_LINE_HEIGHT = 38;
-  const X = 60;
-  const MAIN_Y = 200;
-
-  // Inline split on line 2: "真的會讓" (white) + "朋友遠離" (orange) + "你嗎？" (white)
-  // CJK char width ≈ fontSize × 1.0 for monospace CJK in PingFang
-  const CJK_W = MAIN_SIZE;
-  const x2a = X;
-  const x2b = x2a + text.mainLine2a.length * CJK_W;  // 4 × 52 = 208 → x = 268
-  const x2c = x2b + text.mainLine2b.length * CJK_W;  // 268 + 208 = 476
-
-  const supportY = MAIN_Y + MAIN_LINE_HEIGHT * 2 + 40;  // 200+152+40 = 392
-  const footerY = 1302;
-
-  // Escape all text strings
-  const e = escapeDT;
   const ff = `fontfile=${fontFile}`;
+  const e = escapeDT;
+  const CJK_W = MAIN_SIZE; // approximate CJK char width
 
-  const filters = [
-    // 1. Scale: fit width to 1080, maintain AR (832×1104 → 1080×1432), crop to 1080×1350
+  const filters: string[] = [
     `scale=1080:-2:flags=lanczos`,
     `crop=1080:1350:0:0`,
-
-    // 2. Dark overlay on left half for text readability
     `drawbox=x=0:y=0:w=600:h=ih:color=black@0.42:t=fill`,
+  ];
 
-    // 3. Main line 1 — white
-    `drawtext=${ff}:text='${e(text.mainLine1)}':x=${X}:y=${MAIN_Y}:fontsize=${MAIN_SIZE}:fontcolor=white:shadowcolor=black@0.7:shadowx=2:shadowy=2`,
+  // Main lines — each line's segments accumulate x
+  text.mainLines.forEach((line, lineIdx) => {
+    const y = MAIN_Y + lineIdx * MAIN_LINE_HEIGHT;
+    let x = X;
+    for (const seg of line.segments) {
+      const color = seg.highlight ? "#F97316" : "white";
+      filters.push(
+        `drawtext=${ff}:text='${e(seg.text)}':x=${x}:y=${y}:fontsize=${MAIN_SIZE}:fontcolor=${color}:shadowcolor=black@0.7:shadowx=2:shadowy=2`
+      );
+      x += seg.text.length * CJK_W;
+    }
+  });
 
-    // 4. Main line 2 — three segments: white / orange / white
-    `drawtext=${ff}:text='${e(text.mainLine2a)}':x=${x2a}:y=${MAIN_Y + MAIN_LINE_HEIGHT}:fontsize=${MAIN_SIZE}:fontcolor=white:shadowcolor=black@0.7:shadowx=2:shadowy=2`,
-    `drawtext=${ff}:text='${e(text.mainLine2b)}':x=${x2b}:y=${MAIN_Y + MAIN_LINE_HEIGHT}:fontsize=${MAIN_SIZE}:fontcolor=#F97316:shadowcolor=black@0.7:shadowx=2:shadowy=2`,
-    `drawtext=${ff}:text='${e(text.mainLine2c)}':x=${x2c}:y=${MAIN_Y + MAIN_LINE_HEIGHT}:fontsize=${MAIN_SIZE}:fontcolor=white:shadowcolor=black@0.7:shadowx=2:shadowy=2`,
+  // Support lines
+  const supportY = MAIN_Y + MAIN_LINE_HEIGHT * text.mainLines.length + 40;
+  text.supportLines.forEach((line, idx) => {
+    filters.push(
+      `drawtext=${ff}:text='${e(line)}':x=${X}:y=${supportY + idx * SUPPORT_LINE_HEIGHT}:fontsize=${SUPPORT_SIZE}:fontcolor=white@0.82:shadowcolor=black@0.5:shadowx=1:shadowy=1`
+    );
+  });
 
-    // 5. Support lines — white 80% opacity
-    `drawtext=${ff}:text='${e(text.supportLine1)}':x=${X}:y=${supportY}:fontsize=${SUPPORT_SIZE}:fontcolor=white@0.82:shadowcolor=black@0.5:shadowx=1:shadowy=1`,
-    `drawtext=${ff}:text='${e(text.supportLine2)}':x=${X}:y=${supportY + SUPPORT_LINE_HEIGHT}:fontsize=${SUPPORT_SIZE}:fontcolor=white@0.82:shadowcolor=black@0.5:shadowx=1:shadowy=1`,
-
-    // 6. Footer — orange
-    `drawtext=${ff}:text='${e(text.footerText)}':x=${X}:y=${footerY}:fontsize=20:fontcolor=#F97316@0.90:shadowcolor=black@0.5:shadowx=1:shadowy=1`,
-  ].join(",");
+  // Footer
+  filters.push(
+    `drawtext=${ff}:text='${e(text.footerText)}':x=${X}:y=${FOOTER_Y}:fontsize=20:fontcolor=#F97316@0.90:shadowcolor=black@0.5:shadowx=1:shadowy=1`
+  );
 
   const args = [
     "-y",
     "-i", inputVideoPath,
-    "-vf", filters,
+    "-vf", filters.join(","),
     "-c:v", "libx264",
     "-crf", "18",
     "-preset", "medium",
@@ -162,4 +137,49 @@ export async function composeSlide01(
 
   await runFfmpeg(ffmpegBin, args);
   console.log("[compose-video] composition complete:", path.basename(outputVideoPath));
+}
+
+// ── Backward-compat Slide 1 API ───────────────────────────────────────────────
+
+export interface Slide01TextContent {
+  mainLine1: string;
+  mainLine2a: string;
+  mainLine2b: string;
+  mainLine2c: string;
+  supportLine1: string;
+  supportLine2: string;
+  footerText: string;
+}
+
+export const SLIDE1_TEXT: Slide01TextContent = {
+  mainLine1:    "做保險，",
+  mainLine2a:   "真的會讓",
+  mainLine2b:   "朋友遠離",
+  mainLine2c:   "你嗎？",
+  supportLine1: "很多新人還沒開始成交，",
+  supportLine2: "心裡就先害怕被討厭。",
+  footerText:   "小佑老師｜保險新人真話",
+};
+
+export async function composeSlide01(
+  inputVideoPath: string,
+  outputVideoPath: string,
+  text: Slide01TextContent = SLIDE1_TEXT
+): Promise<void> {
+  // Convert legacy format to generic SlideComposeText
+  const composeText: SlideComposeText = {
+    mainLines: [
+      { segments: [{ text: text.mainLine1, highlight: false }] },
+      {
+        segments: [
+          { text: text.mainLine2a, highlight: false },
+          { text: text.mainLine2b, highlight: true },
+          { text: text.mainLine2c, highlight: false },
+        ],
+      },
+    ],
+    supportLines: [text.supportLine1, text.supportLine2],
+    footerText: text.footerText,
+  };
+  await composeSlide(inputVideoPath, outputVideoPath, composeText);
 }

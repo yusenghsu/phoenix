@@ -1,12 +1,11 @@
 // Dev-only route — returns 403 in production.
 // Recovers an existing successful Runway task into the local manifest without re-generating.
-// Use this when a task succeeded but persistence was not in place at generation time.
 // No API key is logged. No secrets are exposed in responses.
 
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
-import { updateSlide01, GENERATED_DIR } from "@/lib/launch/manifest";
+import { updateSlide, slideRouteIdToManifestKey, GENERATED_DIR } from "@/lib/launch/manifest";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -51,9 +50,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  if (slide_id !== "slide-01") {
+  const manifestKey = slideRouteIdToManifestKey(slide_id);
+  if (!manifestKey) {
     return NextResponse.json(
-      { status: "failed", error: "Only slide-01 is supported for recovery at this time." },
+      { status: "failed", error: `slide_id must be slide-01 through slide-08. Got: ${slide_id}` },
       { status: 400 }
     );
   }
@@ -64,11 +64,7 @@ export async function POST(req: NextRequest) {
     "Content-Type": "application/json",
   };
 
-  // Safe log — no key, no auth header value
-  console.log("[Runway recover task]", {
-    taskId: task_id,
-    endpoint: TASK_ENDPOINT_TEMPLATE,
-  });
+  console.log("[Runway recover task]", { taskId: task_id, endpoint: TASK_ENDPOINT_TEMPLATE });
 
   const taskUrl = `${RUNWAY_API_BASE}/tasks/${task_id}`;
   const taskRes = await fetch(taskUrl, { method: "GET", headers });
@@ -79,7 +75,7 @@ export async function POST(req: NextRequest) {
 
     const hint =
       taskRes.status === 404
-        ? "Task not found. Confirm task id, organization, API key, and endpoint. Task outputs may expire after some time. Do not regenerate until checked."
+        ? "Task not found. Confirm task id, organization, API key, and endpoint. Task outputs may expire after some time."
         : taskRes.status === 401
         ? "Unauthorized. Confirm RUNWAY_API_KEY is correct and active."
         : `Runway API returned ${taskRes.status}.`;
@@ -106,7 +102,6 @@ export async function POST(req: NextRequest) {
     failureCode?: string;
   };
 
-  // Safe log — no output URL (may be signed)
   console.log("[Runway recover result]", {
     taskId: task.id,
     status: task.status,
@@ -129,36 +124,26 @@ export async function POST(req: NextRequest) {
   const videoUrl = task.output?.[0];
   if (!videoUrl) {
     return NextResponse.json(
-      {
-        status: "failed",
-        provider: "runway",
-        task_id,
-        error: "Runway task succeeded but output URL is missing.",
-      },
+      { status: "failed", provider: "runway", task_id, error: "Runway task succeeded but output URL is missing." },
       { status: 500 }
     );
   }
 
-  // Download and persist the video locally
   const videoRes = await fetch(videoUrl);
   if (!videoRes.ok) {
     return NextResponse.json(
-      {
-        status: "failed",
-        task_id,
-        error: `Failed to download Runway video: HTTP ${videoRes.status}. The output URL may have expired.`,
-      },
+      { status: "failed", task_id, error: `Failed to download Runway video: HTTP ${videoRes.status}. The output URL may have expired.` },
       { status: 502 }
     );
   }
 
   const buffer = Buffer.from(await videoRes.arrayBuffer());
   await fs.mkdir(GENERATED_DIR, { recursive: true });
-  const localFilename = "slide-01-runway-intermediate.mp4";
+  const localFilename = `${slide_id}-runway-intermediate.mp4`;
   await fs.writeFile(path.join(GENERATED_DIR, localFilename), buffer);
   const localVideoUrl = `/generated/final-launch-pack/${localFilename}`;
 
-  await updateSlide01({
+  await updateSlide(manifestKey, {
     runway_motion_status: "generated",
     runway_intermediate_video_url: localVideoUrl,
     runway_task_id: task_id,
@@ -168,7 +153,7 @@ export async function POST(req: NextRequest) {
     final_ratio_status: "unknown",
   });
 
-  console.log("[recover-runway-task] recovery complete", { task_id, localVideoUrl });
+  console.log("[recover-runway-task] recovery complete", { task_id, slide_id, localVideoUrl });
 
   return NextResponse.json({
     status: "recovered",

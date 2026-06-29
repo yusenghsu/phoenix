@@ -86,12 +86,12 @@ function MotionMissingState({ size }: { size: "featured" | "thumbnail" }) {
       {is ? (
         <>
           <div style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ color: "#1A1816", fontSize: 16 }}>▷</span>
+            <span style={{ color: "#6F675E", fontSize: 16 }}>▷</span>
           </div>
-          <p style={{ color: "#1A1816", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textAlign: "center", lineHeight: 1.6 }}>
-            MOTION ASSET MISSING
+          <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textAlign: "center", lineHeight: 1.6 }}>
+            動態素材缺失
             <br />
-            <span style={{ fontWeight: 400, fontSize: 9 }}>Connect a motion provider to generate background video</span>
+            <span style={{ fontWeight: 400, fontSize: 9 }}>連接動態供應商以生成背景影片</span>
           </p>
         </>
       ) : (
@@ -217,15 +217,15 @@ export default function MotionSlidePreview({ slide, videoUrl, size = "featured",
         isFinalComposed ? (
           <div style={{ position: "absolute", top: 12, right: 12, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
             <div style={{ background: "rgba(34,197,94,0.14)", border: "1px solid rgba(34,197,94,0.30)", borderRadius: 6, padding: "3px 8px" }}>
-              <span style={{ color: "#4ade80", fontSize: 8, fontWeight: 700, letterSpacing: "0.08em" }}>FINAL COMPOSED MP4</span>
+              <span style={{ color: "#4ade80", fontSize: 8, fontWeight: 700, letterSpacing: "0.08em" }}>最終合成 MP4</span>
             </div>
             <div style={{ background: "rgba(0,0,0,0.45)", borderRadius: 4, padding: "2px 6px" }}>
-              <span style={{ color: "rgba(255,255,255,0.38)", fontSize: 7, fontWeight: 500, letterSpacing: "0.05em" }}>Text burned in · no HTML overlay</span>
+              <span style={{ color: "rgba(255,255,255,0.38)", fontSize: 7, fontWeight: 500, letterSpacing: "0.05em" }}>文字已燒進影片｜沒有前端疊字</span>
             </div>
           </div>
         ) : (
           <div style={{ position: "absolute", top: 12, right: 12, background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.25)", borderRadius: 6, padding: "3px 8px" }}>
-            <span style={{ color: "#60a5fa", fontSize: 8, fontWeight: 700, letterSpacing: "0.08em" }}>MOTION PREVIEW</span>
+            <span style={{ color: "#60a5fa", fontSize: 8, fontWeight: 700, letterSpacing: "0.08em" }}>動態預覽</span>
           </div>
         )
       )}
