@@ -22,14 +22,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { slide_id: string; prompt: string; negative_prompt?: string };
+  let body: { slide_id: string; prompt: string; negative_prompt?: string; keyframe_mode?: string };
   try {
     body = (await req.json()) as typeof body;
   } catch {
     return NextResponse.json({ status: "failed", error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { slide_id, prompt, negative_prompt = "" } = body;
+  const { slide_id, prompt, negative_prompt = "", keyframe_mode } = body;
   if (!slide_id || !prompt) {
     return NextResponse.json({ status: "failed", error: "slide_id and prompt required" }, { status: 400 });
   }
@@ -50,16 +50,24 @@ export async function POST(req: NextRequest) {
       prompt: fullPrompt,
     });
 
-    // Persist keyframe for any slide-0X — copy to canonical filename and update manifest
+    // Persist keyframe for any slide-0X — copy to canonical filename and update manifest.
+    // Returns the canonical URL so the client state always matches the manifest.
+    let returnUrl = image_url;
     const manifestKey = slideRouteIdToManifestKey(slide_id);
     if (manifestKey) {
       try {
         const sourcePath = path.join(GENERATED_DIR, `${slide_id}-background.png`);
         const canonicalPath = path.join(GENERATED_DIR, `${slide_id}-keyframe.png`);
         await fs.copyFile(sourcePath, canonicalPath);
-        await updateSlide(manifestKey, {
-          keyframe_url: `/generated/final-launch-pack/${slide_id}-keyframe.png`,
-        });
+        const canonicalUrl = `/generated/final-launch-pack/${slide_id}-keyframe.png`;
+        const manifestUpdates: Parameters<typeof updateSlide>[1] = { keyframe_url: canonicalUrl };
+        if (keyframe_mode) {
+          const isLowRisk = keyframe_mode === "low_risk";
+          manifestUpdates.keyframe_mode = isLowRisk ? "low_risk" : "normal";
+          manifestUpdates.low_risk_mode = isLowRisk;
+        }
+        await updateSlide(manifestKey, manifestUpdates);
+        returnUrl = canonicalUrl; // single source of truth — UI and manifest agree
       } catch (manifestErr) {
         console.warn("[generate-slide] manifest update failed (non-critical):", manifestErr);
       }
@@ -67,7 +75,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       slide_id,
-      image_url,
+      image_url: returnUrl,
       generated_at,
       status: "generated",
       model_used,

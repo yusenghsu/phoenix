@@ -99,7 +99,7 @@ const SLIDE1_SAFER_KEYFRAME_NEGATIVE =
 
 // Slide 2 / PAIN — low-risk keyframe prompt
 // 主題：你怕的不是被拒絕，是被貼上「變現實」的標籤
-// 場景：空桌 + 手機 + 咖啡 + 模糊背景，不含人物互動，降低 Runway INTERNAL_BAD_OUTPUT 風險
+// 場景：空桌 + 手機 + 咖啡 + 模糊背景，作為 fallback 首幀（#070D：人物畫面不是自動失敗原因）
 const SLIDE2_LOWRISK_KEYFRAME_PROMPT =
   "nighttime cafe corner, an empty table with a faintly glowing phone screen — " +
   "absolutely no readable text on phone screen — a cup of coffee placed beside it, " +
@@ -116,13 +116,13 @@ const SLIDE2_LOWRISK_KEYFRAME_NEGATIVE =
   "coffee shop conversation, friends chatting";
 
 // Slide 2 / PAIN — low-risk motion prompt
-// 完全避免臉部 / 手部 / 人物互動動作，只做極微小的環境動態
+// 完全不提臉部 / 手部 / 人物詞彙，只描述靜物與運鏡，降低 Runway content filter 風險
 const SLIDE2_LOWRISK_MOTION_PROMPT =
   "Create a very subtle cinematic motion from this vertical keyframe. Keep the scene almost still. " +
   "Slow camera push-in only. Slight warm light flicker. Very subtle bokeh movement in the background. " +
-  "Do not animate faces. Do not animate hands. Do not create new people. Do not add text. " +
-  "Do not change the phone screen. Do not move objects dramatically. " +
-  "Preserve the composition and dark negative space for Chinese text overlay.";
+  "Preserve the table, phone, coffee cup, chair, lighting, and dark negative space. " +
+  "No text. No logo. No new objects. No dramatic movement. No composition change. " +
+  "Keep the phone screen unchanged.";
 
 // Diagnostic data returned by the Runway failure route response
 interface RunwayDiagnostic {
@@ -1167,6 +1167,272 @@ function StillGatePanel({ gate }: { gate: QualityGateResult }) {
   );
 }
 
+// ── Runway Diagnostic Panel ───────────────────────────────────────────────────
+
+interface DiagManifestEntry {
+  keyframe_url?: string;
+  keyframe_mode?: string;
+  low_risk_mode?: boolean;
+  runway_motion_status?: string;
+  runway_intermediate_video_url?: string;
+  final_composition_status?: string;
+  final_video_url?: string;
+  final_ratio_status?: string;
+  motion_prompt_mode?: string;
+  motion_attempt_count?: number;
+  last_failure?: { failure_code?: string; failure_message?: string; task_id?: string; timestamp?: string } | null;
+  updated_at?: string;
+}
+
+function DiagRow({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div style={{ display: "flex", gap: 12, padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+      <span style={{ color: "#6F675E", fontSize: 10, fontWeight: 600, width: 170, flexShrink: 0, paddingTop: 1 }}>{label}</span>
+      <span style={{ color: valueColor ?? "#CFC7BA", fontSize: 10, lineHeight: 1.5, wordBreak: "break-all" }}>{value}</span>
+    </div>
+  );
+}
+
+function RunwayDiagnosticPanel({ slide1State, slide2State }: { slide1State: SlideMotionState; slide2State: SlideMotionState }) {
+  const [manifest, setManifest] = useState<Record<string, DiagManifestEntry> | null>(null);
+  const [kfSizes, setKfSizes] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    fetch("/api/debug/final-launch/manifest")
+      .then((r) => r.json())
+      .then((d: { manifest?: Record<string, DiagManifestEntry> }) => setManifest(d.manifest ?? {}))
+      .catch(() => setManifest({}));
+  }, []);
+
+  useEffect(() => {
+    const urls = [slide1State.keyframeUrl, slide2State.keyframeUrl].filter(Boolean) as string[];
+    for (const url of urls) {
+      fetch(url, { method: "HEAD" })
+        .then((r) => {
+          const len = r.headers.get("content-length");
+          setKfSizes((prev) => ({ ...prev, [url]: len ? `${(Number(len) / 1024).toFixed(1)} KB` : "(大小未知)" }));
+        })
+        .catch(() => setKfSizes((prev) => ({ ...prev, [url]: "(讀取失敗)" })));
+    }
+  }, [slide1State.keyframeUrl, slide2State.keyframeUrl]);
+
+  // Evidence-based: single words like "face", "person", "hands" are NOT flagged.
+  // Only explicit animation-command phrases that Runway's content filter has been shown to trigger.
+  const ANIM_RISK_PHRASES = [
+    "animate face", "animate faces", "animate hand", "animate hands",
+    "animate person", "animate people", "animate the face",
+    "create new people", "create new person", "add people", "add person",
+    "close-up face", "extreme close-up", "detailed hand", "finger motion",
+  ];
+  const findHighRisk = (prompt: string) => ANIM_RISK_PHRASES.filter((p) => prompt.toLowerCase().includes(p));
+
+  const slide2MotionPrompt = slide2State.lowRiskKeyframe ? SLIDE2_LOWRISK_MOTION_PROMPT : SLIDE_MOTION_CONFIGS[1].motionPrompt;
+  const slide2HighRisk = findHighRisk(slide2MotionPrompt);
+  const slide1HighRisk = findHighRisk(SLIDE1_MOTION_PROMPT);
+
+  const slide2ManifestData = manifest?.slide_02;
+
+  const slide2UiUrl = slide2State.keyframeUrl;
+  const slide2ManifestUrl = slide2ManifestData?.keyframe_url;
+  const urlsMatch = !!slide2UiUrl && !!slide2ManifestUrl && slide2UiUrl === slide2ManifestUrl;
+  const urlMismatch = !!slide2UiUrl && !!slide2ManifestUrl && slide2UiUrl !== slide2ManifestUrl;
+
+  const slide1SuccessAttempt = slide1State.motionAttempts.find((a) => a.status === "generated");
+  const slide1LatestAttempt = slide1State.motionAttempts[0];
+  const slide2Error = slide2State.motionError;
+
+  const comparisons: [string, string, string][] = [
+    ["endpoint", "POST /v1/image_to_video", "POST /v1/image_to_video"],
+    ["model", "gen3a_turbo（預設）", "gen3a_turbo（預設）"],
+    ["ratio", "832:1104", "832:1104"],
+    ["duration", "5s", "5s"],
+    ["promptImage", "data:image/png;base64,[省略]", "data:image/png;base64,[省略]"],
+    ["image source", "本地 PNG → base64 data URI", "本地 PNG → base64 data URI"],
+    ["promptText 前 80 字", SLIDE1_MOTION_PROMPT.slice(0, 80) + "…", slide2MotionPrompt.slice(0, 80) + "…"],
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+      {/* Slide 1 — 成功 */}
+      <div style={{ background: "rgba(34,197,94,0.04)", border: "1px solid rgba(34,197,94,0.12)", borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#4ade80", fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Slide 1 / HOOK — 成功任務</p>
+        <DiagRow label="slide_id" value="slide-01" />
+        <DiagRow label="keyframe_url" value={slide1State.keyframeUrl ?? "（未設定）"} />
+        <DiagRow label="keyframe 存在" value={slide1State.keyframeUrl ? "✓ 是" : "✗ 否"} valueColor={slide1State.keyframeUrl ? "#4ade80" : "#f87171"} />
+        <DiagRow label="keyframe 大小" value={slide1State.keyframeUrl ? (kfSizes[slide1State.keyframeUrl] ?? "讀取中…") : "—"} />
+        <DiagRow label="intermediate_url" value={slide1State.intermediateVideoUrl ?? "（未生成）"} />
+        <DiagRow label="final_video_url" value={slide1State.finalVideoUrl ?? "（未合成）"} />
+        <DiagRow label="provider_ratio_status" value={slide1State.providerRatioStatus} valueColor={slide1State.providerRatioStatus === "accepted_intermediate" ? "#4ade80" : "#9B9387"} />
+        <DiagRow label="final_ratio_status" value={slide1State.finalRatioStatus} valueColor={slide1State.finalRatioStatus === "passed_4_5" ? "#4ade80" : "#9B9387"} />
+        <DiagRow label="Runway task_id" value={slide1SuccessAttempt?.task_id ?? slide1LatestAttempt?.task_id ?? "（未知）"} />
+        <DiagRow label="prompt_mode" value={slide1SuccessAttempt?.prompt_mode ?? slide1LatestAttempt?.prompt_mode ?? "—"} />
+        <DiagRow label="是否 image_to_video" value="✓ 是（/v1/image_to_video）" valueColor="#4ade80" />
+        <DiagRow label="request ratio" value="832:1104" />
+        <DiagRow label="model" value="gen3a_turbo（預設）" />
+        <DiagRow label="duration" value="5s" />
+        <div style={{ marginTop: 8 }}>
+          <p style={{ color: "#6F675E", fontSize: 9, fontWeight: 600, marginBottom: 3 }}>motion prompt（前 500 字）</p>
+          <pre style={{ color: "#9B9387", fontSize: 9, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", background: "rgba(0,0,0,0.3)", padding: "8px 10px", borderRadius: 8, margin: 0 }}>{SLIDE1_MOTION_PROMPT.slice(0, 500)}</pre>
+          {slide1HighRisk.length > 0 && <p style={{ color: "#fb923c", fontSize: 9, marginTop: 4 }}>⚠️ 高風險詞: {slide1HighRisk.join(", ")}</p>}
+          {slide1HighRisk.length === 0 && <p style={{ color: "#4ade80", fontSize: 9, marginTop: 4 }}>✓ 無高風險詞</p>}
+        </div>
+      </div>
+
+      {/* Slide 2 — 失敗 */}
+      <div style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Slide 2 / PAIN — 最近失敗任務</p>
+        <DiagRow label="slide_id" value="slide-02" />
+        <DiagRow label="keyframe_url" value={slide2State.keyframeUrl ?? "（未設定）"} />
+        <DiagRow label="keyframe 存在" value={slide2State.keyframeUrl ? "✓ 是" : "✗ 否"} valueColor={slide2State.keyframeUrl ? "#4ade80" : "#f87171"} />
+        <DiagRow label="keyframe 大小" value={slide2State.keyframeUrl ? (kfSizes[slide2State.keyframeUrl] ?? "讀取中…") : "—"} />
+        <DiagRow label="lowRiskKeyframe" value={slide2State.lowRiskKeyframe ? "✓ true（低風險首幀）" : "✗ false（未標記）"} valueColor={slide2State.lowRiskKeyframe ? "#4ade80" : "#f87171"} />
+        <DiagRow label="motionStatus" value={slide2State.motionStatus} valueColor={slide2State.motionStatus === "failed" ? "#f87171" : slide2State.motionStatus === "generated" ? "#4ade80" : "#9B9387"} />
+        <DiagRow label="Runway task_id" value={slide2Error?.task_id ?? "（未取得）"} />
+        <DiagRow label="failureCode" value={slide2Error?.failure_code ?? "—"} valueColor={slide2Error?.failure_code ? "#f87171" : "#9B9387"} />
+        <DiagRow label="failureMessage" value={slide2Error?.failure_message ?? "—"} valueColor={slide2Error?.failure_message ? "#fb923c" : "#9B9387"} />
+        <DiagRow label="是否 image_to_video" value="✓ 是（/v1/image_to_video）" valueColor="#4ade80" />
+        <DiagRow label="request ratio" value="832:1104" />
+        <DiagRow label="model" value="gen3a_turbo（預設）" />
+        <DiagRow label="duration" value="5s" />
+        <div style={{ marginTop: 8 }}>
+          <p style={{ color: slide2State.lowRiskKeyframe ? "#4ade80" : "#fb923c", fontSize: 9, fontWeight: 700, marginBottom: 3 }}>
+            {slide2State.lowRiskKeyframe ? "✓ 使用 SLIDE2_LOWRISK_MOTION_PROMPT" : "⚠️ 使用一般 motion prompt（高風險）"}
+          </p>
+          <pre style={{ color: "#9B9387", fontSize: 9, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", background: "rgba(0,0,0,0.3)", padding: "8px 10px", borderRadius: 8, margin: 0 }}>{slide2MotionPrompt.slice(0, 500)}</pre>
+          {slide2HighRisk.length > 0 && <p style={{ color: "#fb923c", fontSize: 9, marginTop: 4 }}>⚠️ 高風險詞（即使在 "Do not" 語境中 Runway 仍可能拒絕）: {slide2HighRisk.join(", ")}</p>}
+          {slide2HighRisk.length === 0 && <p style={{ color: "#4ade80", fontSize: 9, marginTop: 4 }}>✓ 無高風險詞</p>}
+        </div>
+      </div>
+
+      {/* Sanitized Request 比對 */}
+      <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#CFC7BA", fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Sanitized Request 比對（無 API key）</p>
+        <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr", gap: "4px 12px" }}>
+          <span style={{ color: "#6F675E", fontSize: 9, fontWeight: 700 }}>欄位</span>
+          <span style={{ color: "#4ade80", fontSize: 9, fontWeight: 700 }}>Slide 1（成功）</span>
+          <span style={{ color: "#f87171", fontSize: 9, fontWeight: 700 }}>Slide 2（失敗）</span>
+          {comparisons.flatMap(([field, s1, s2], i) => [
+            <span key={`f${i}`} style={{ color: "#6F675E", fontSize: 9, paddingTop: 3 }}>{field}</span>,
+            <span key={`s1${i}`} style={{ color: "#CFC7BA", fontSize: 9, paddingTop: 3, wordBreak: "break-all" }}>{s1}</span>,
+            <span key={`s2${i}`} style={{ color: "#CFC7BA", fontSize: 9, paddingTop: 3, wordBreak: "break-all" }}>{s2}</span>,
+          ])}
+        </div>
+        <p style={{ color: "#6F675E", fontSize: 9, marginTop: 8 }}>
+          base URL: https://api.dev.runwayml.com · Authorization header 不顯示 · API key 不顯示
+        </p>
+      </div>
+
+      {/* Keyframe URL 三方驗證 */}
+      <div style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${urlMismatch ? "rgba(239,68,68,0.25)" : urlsMatch ? "rgba(34,197,94,0.18)" : "rgba(255,255,255,0.06)"}`, borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#CFC7BA", fontSize: 11, fontWeight: 700, marginBottom: 10 }}>第 2 張 Keyframe URL 三方驗證</p>
+        <DiagRow label="① UI 顯示 URL" value={slide2UiUrl ?? "（未設定）"} />
+        <DiagRow label="② Manifest URL" value={slide2ManifestUrl ?? (manifest === null ? "讀取中…" : "（無記錄）")} />
+        <DiagRow label="③ API 實際送出 URL" value={slide2UiUrl ?? "（同 UI — client 直接送 selectedState.keyframeUrl）"} />
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
+          {urlsMatch && <p style={{ color: "#4ade80", fontSize: 10, fontWeight: 700 }}>✓ 三方一致 — UI ＝ Manifest ＝ API 送出素材</p>}
+          {urlMismatch && (
+            <>
+              <p style={{ color: "#f87171", fontSize: 10, fontWeight: 700 }}>警告：第 2 張畫面素材與 API 實際送出素材不一致</p>
+              <p style={{ color: "#9B9387", fontSize: 9, marginTop: 4 }}>建議：點選「還原已儲存素材」讓 UI 同步 manifest 的 keyframe URL</p>
+            </>
+          )}
+          {slide2UiUrl && !slide2ManifestUrl && manifest !== null && (
+            <p style={{ color: "#fb923c", fontSize: 10 }}>⚠️ UI 有 URL，但 manifest 無記錄 — generate-slide 可能未寫入</p>
+          )}
+          {!slide2UiUrl && !slide2ManifestUrl && manifest !== null && (
+            <p style={{ color: "#6F675E", fontSize: 10 }}>— 兩者均未設定（首幀尚未產生）</p>
+          )}
+        </div>
+      </div>
+
+      {/* Runway 測試就緒狀態 */}
+      {(() => {
+        const kfOk = !!slide2UiUrl && !!slide2ManifestUrl && slide2UiUrl === slide2ManifestUrl;
+        const promptOk = slide2HighRisk.length === 0;
+        const ready = kfOk && promptOk;
+        return (
+          <div style={{ background: ready ? "rgba(34,197,94,0.05)" : "rgba(239,68,68,0.05)", border: `1px solid ${ready ? "rgba(34,197,94,0.20)" : "rgba(239,68,68,0.20)"}`, borderRadius: 12, padding: "14px 16px" }}>
+            <p style={{ color: ready ? "#4ade80" : "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 8 }}>
+              {ready ? "✓ Slide 2 可測試 Runway" : "⊘ Slide 2 尚不可送入 Runway"}
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <p style={{ color: kfOk ? "#4ade80" : "#f87171", fontSize: 10 }}>
+                {kfOk ? "✓" : "✗"} 素材來源一致性：{kfOk ? "通過" : "不一致（請還原已儲存素材）"}
+              </p>
+              <p style={{ color: promptOk ? "#4ade80" : "#f87171", fontSize: 10 }}>
+                {promptOk ? "✓" : "✗"} Prompt 安全性：{promptOk ? "通過（無高風險詞）" : `含高風險詞：${slide2HighRisk.join(", ")}`}
+              </p>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Prompt 驗證 */}
+      <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#CFC7BA", fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Slide 2 Runway Prompt 驗證</p>
+        {slide2State.lowRiskKeyframe ? (
+          <p style={{ color: "#4ade80", fontSize: 10, marginBottom: 6 }}>✓ lowRiskKeyframe = true → 觸發 Runway 時使用 SLIDE2_LOWRISK_MOTION_PROMPT</p>
+        ) : (
+          <p style={{ color: "#f87171", fontSize: 10, marginBottom: 6, fontWeight: 700 }}>⚠️ lowRiskKeyframe 未設定 → 會使用一般 motion prompt（含高風險詞）</p>
+        )}
+        {slide2State.motionStatus === "missing" && (
+          <p style={{ color: "#9B9387", fontSize: 10 }}>— 尚未觸發 Runway（motionStatus: missing）</p>
+        )}
+        {slide2HighRisk.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <p style={{ color: "#fb923c", fontSize: 10, fontWeight: 600, marginBottom: 4 }}>Runway 可能仍拒絕（即使在 "Do not" 語境中）：</p>
+            {slide2HighRisk.map((w) => (
+              <p key={w} style={{ color: "#9B9387", fontSize: 9, paddingLeft: 10 }}>· &quot;{w}&quot;</p>
+            ))}
+          </div>
+        )}
+        {slide2HighRisk.length === 0 && <p style={{ color: "#4ade80", fontSize: 10 }}>✓ 無偵測到高風險詞</p>}
+      </div>
+
+      {/* Manifest slide_02 */}
+      <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#CFC7BA", fontSize: 11, fontWeight: 700, marginBottom: 10 }}>Manifest slide_02 原始資料</p>
+        {manifest === null ? (
+          <p style={{ color: "#6F675E", fontSize: 10 }}>讀取中…</p>
+        ) : !slide2ManifestData ? (
+          <p style={{ color: "#f87171", fontSize: 10 }}>⚠️ manifest 無 slide_02 記錄 — 首幀尚未產生或未寫入</p>
+        ) : (
+          <>
+            {([
+              ["keyframe_url", slide2ManifestData.keyframe_url ?? "（未設定）"],
+              ["keyframe_mode", slide2ManifestData.keyframe_mode ?? "（未設定）"],
+              ["low_risk_mode", String(slide2ManifestData.low_risk_mode ?? "（未設定）")],
+              ["runway_motion_status", slide2ManifestData.runway_motion_status ?? "（未設定）"],
+              ["runway_intermediate_video_url", slide2ManifestData.runway_intermediate_video_url ?? "（未設定）"],
+              ["final_composition_status", slide2ManifestData.final_composition_status ?? "（未設定）"],
+              ["final_video_url", slide2ManifestData.final_video_url ?? "（未設定）"],
+              ["final_ratio_status", slide2ManifestData.final_ratio_status ?? "（未設定）"],
+              ["motion_prompt_mode", slide2ManifestData.motion_prompt_mode ?? "（未設定）"],
+              ["motion_attempt_count", String(slide2ManifestData.motion_attempt_count ?? "0")],
+              ["last_failure.failure_code", slide2ManifestData.last_failure?.failure_code ?? "（無）"],
+              ["last_failure.failure_message", slide2ManifestData.last_failure?.failure_message ?? "（無）"],
+              ["last_failure.task_id", slide2ManifestData.last_failure?.task_id ?? "（無）"],
+              ["last_failure.timestamp", slide2ManifestData.last_failure?.timestamp ?? "（無）"],
+              ["updated_at", slide2ManifestData.updated_at ?? "（未設定）"],
+            ] as [string, string][]).map(([k, v]) => <DiagRow key={k} label={k} value={v} />)}
+          </>
+        )}
+      </div>
+
+      {/* Evidence-based conclusion */}
+      <div style={{ background: "rgba(251,146,60,0.03)", border: "1px solid rgba(251,146,60,0.12)", borderRadius: 12, padding: "14px 16px" }}>
+        <p style={{ color: "#FB923C", fontSize: 10, fontWeight: 700, marginBottom: 6 }}>目前判斷</p>
+        <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.7 }}>
+          人物畫面不是自動失敗原因。請以素材來源一致性、Prompt 安全性與 Runway 實際回傳結果為準。
+          若診斷區所有項目通過但 Runway 仍失敗，再考慮 Fallback 選項。
+        </p>
+      </div>
+
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function FinalLaunchStudioPage() {
@@ -1506,10 +1772,13 @@ export default function FinalLaunchStudioPage() {
         status: string;
         manifest?: Record<string, {
           keyframe_url?: string;
+          keyframe_mode?: "low_risk" | "normal";
+          low_risk_mode?: boolean;
           runway_intermediate_video_url?: string;
           final_composition_status?: string;
           final_video_url?: string;
           final_ratio_status?: string;
+          last_failure?: { failure_code?: string; failure_message?: string; task_id?: string; timestamp: string } | null;
         }>
       };
       if (!data.manifest) { setHasSavedAssets(false); return; }
@@ -1551,7 +1820,24 @@ export default function FinalLaunchStudioPage() {
         if (slideData.keyframe_url) {
           p.keyframeUrl = slideData.keyframe_url;
           p.keyframeStatus = "generated";
-          if (i === 1) p.lowRiskKeyframe = true; // slide 2 always uses low-risk keyframe
+          // Restore low-risk flag from manifest; fall back to true for slide 2 (backward compat)
+          if (slideData.keyframe_mode === "low_risk" || slideData.low_risk_mode) {
+            p.lowRiskKeyframe = true;
+          } else if (slideData.keyframe_mode === "normal") {
+            p.lowRiskKeyframe = false;
+          } else if (i === 1) {
+            p.lowRiskKeyframe = true;
+          }
+        }
+        // Restore last failure info if motion never succeeded
+        if (slideData.last_failure && !slideData.runway_intermediate_video_url) {
+          p.motionStatus = "failed";
+          p.motionError = {
+            error: slideData.last_failure.failure_message ?? "Previous Runway failure",
+            task_id: slideData.last_failure.task_id,
+            failure_code: slideData.last_failure.failure_code,
+            failure_message: slideData.last_failure.failure_message,
+          };
         }
         if (slideData.runway_intermediate_video_url) {
           p.intermediateVideoUrl = slideData.runway_intermediate_video_url;
@@ -1645,6 +1931,7 @@ export default function FinalLaunchStudioPage() {
     const slideId = config?.slideId ?? `slide-0${String(slideIndex + 1).padStart(2, "0")}`;
     const slide = slides[slideIndex];
     const motionPrompt = motionPromptOverride ?? slide.motion_asset.video_generation_prompt;
+    const effectivePromptMode = motionPromptOverride && slideIndex === 1 ? "low_risk" : promptMode;
     const patch = (p: Partial<SlideMotionState>) =>
       setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), ...p } }));
     patch({ motionStatus: "generating", motionError: undefined });
@@ -1652,7 +1939,7 @@ export default function FinalLaunchStudioPage() {
       const res = await fetch("/api/debug/final-launch/generate-motion-from-keyframe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slide_id: slideId, keyframe_url: keyframeUrl, motion_prompt: motionPrompt, duration_seconds: 5 }),
+        body: JSON.stringify({ slide_id: slideId, keyframe_url: keyframeUrl, motion_prompt: motionPrompt, motion_prompt_mode: effectivePromptMode, duration_seconds: 5 }),
       });
       const data = (await res.json()) as { status: string; background_video_url?: string; error?: string; task_id?: string; failure_code?: string; failure_message?: string; debug_hint?: string };
       if (data.status === "video_generated" && data.background_video_url) {
@@ -1707,7 +1994,7 @@ export default function FinalLaunchStudioPage() {
     try {
       const res = await fetch("/api/debug/final-launch/manifest");
       if (!res.ok) return;
-      const data = (await res.json()) as { status: string; manifest?: Record<string, { keyframe_url?: string; runway_intermediate_video_url?: string; final_composition_status?: string; final_video_url?: string; final_ratio_status?: string }> };
+      const data = (await res.json()) as { status: string; manifest?: Record<string, { keyframe_url?: string; keyframe_mode?: "low_risk" | "normal"; low_risk_mode?: boolean; runway_intermediate_video_url?: string; final_composition_status?: string; final_video_url?: string; final_ratio_status?: string; last_failure?: { failure_code?: string; failure_message?: string; task_id?: string; timestamp: string } | null }> };
       const slideData = data.manifest?.[manifestKey];
       if (!slideData) return;
       const p: Partial<SlideMotionState> = {};
@@ -1784,7 +2071,7 @@ export default function FinalLaunchStudioPage() {
       const res = await fetch("/api/debug/final-launch/generate-slide", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slide_id: slideId, prompt: SLIDE2_LOWRISK_KEYFRAME_PROMPT, negative_prompt: SLIDE2_LOWRISK_KEYFRAME_NEGATIVE }),
+        body: JSON.stringify({ slide_id: slideId, prompt: SLIDE2_LOWRISK_KEYFRAME_PROMPT, negative_prompt: SLIDE2_LOWRISK_KEYFRAME_NEGATIVE, keyframe_mode: "low_risk" }),
       });
       const data = (await res.json()) as { status: string; image_url?: string; error?: string };
       if (data.status === "generated" && data.image_url) {
@@ -1916,6 +2203,26 @@ export default function FinalLaunchStudioPage() {
   const consecutiveFailedMotionAttempts = selectedState.motionAttempts.filter(a => a.status === "failed").length;
   const showLowRiskRecovery = safeSelectedIndex === 1 && selectedState.motionStatus !== "generated";
 
+  // Slide 2 Runway gate: block only on URL mismatch OR prompt that explicitly requests animation of sensitive elements.
+  // Single words like "face", "person", "hands" alone are NOT blockers — people are allowed.
+  // Only explicit animation commands trigger the gate (evidence-based policy from #070D).
+  const RUNWAY_ANIM_RISK_PHRASES = [
+    "animate face", "animate faces", "animate hand", "animate hands",
+    "animate person", "animate people", "animate the face",
+    "create new people", "create new person", "add people", "add person",
+    "close-up face", "extreme close-up", "detailed hand", "finger motion",
+  ];
+  const slide2MotionPromptForGate = slideMotionStates[1]?.lowRiskKeyframe ? SLIDE2_LOWRISK_MOTION_PROMPT : SLIDE_MOTION_CONFIGS[1].motionPrompt;
+  const slide2PromptHasHighRisk = RUNWAY_ANIM_RISK_PHRASES.some(p => slide2MotionPromptForGate.toLowerCase().includes(p));
+  const slide2KfUrl = slideMotionStates[1]?.keyframeUrl;
+  const slide2KfIsCanonical = !slide2KfUrl || !slide2KfUrl.endsWith("-background.png");
+  const slide2RunwayBlocked = safeSelectedIndex === 1 && (!slide2KfIsCanonical || slide2PromptHasHighRisk);
+  const slide2RunwayBlockReason = !slide2KfIsCanonical
+    ? "素材來源不一致，請點選「還原已儲存素材」"
+    : slide2PromptHasHighRisk
+    ? "Prompt 含明確動畫指令高風險詞，請修正"
+    : "";
+
   return (
     <div style={{ minHeight: "100vh", background: "#0C0A08", padding: "40px 16px 100px" }}>
       <div style={{ maxWidth: 740, margin: "0 auto" }}>
@@ -2010,28 +2317,28 @@ export default function FinalLaunchStudioPage() {
             )}
           </div>
 
-          {/* Slide 2 low-risk recovery banner — shown whenever motion has failed */}
+          {/* Slide 2 fallback banner — shown when motion not yet generated */}
           {showLowRiskRecovery && (
-            <div style={{ marginBottom: 14, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.22)", borderRadius: 12, padding: "14px 16px" }}>
-              <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
-                第 {selectedSlideNumber} 張動態連續失敗 — 請改用低風險首幀圖
+            <div style={{ marginBottom: 14, background: "rgba(251,146,60,0.05)", border: "1px solid rgba(251,146,60,0.18)", borderRadius: 12, padding: "14px 16px" }}>
+              <p style={{ color: "#FB923C", fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+                第 {selectedSlideNumber} 張動態尚未成功
               </p>
               <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.65, marginBottom: 12 }}>
-                原始首幀含清楚人物、手部或兩人互動，Runway 容易拒絕此類畫面。請改用「空桌 + 手機 + 咖啡 + 模糊背景」構圖，避免繼續消耗 Runway credits。
+                失敗原因尚不能歸因於人物畫面。請先確認診斷區：素材來源一致、Prompt 安全性通過、API request 正確。若診斷皆通過但 Runway 仍失敗，再使用下方 Fallback 選項。
               </p>
               <button
                 onClick={() => handleGenerateLowRiskKeyframe(safeSelectedIndex)}
                 disabled={selectedState.keyframeStatus === "generating"}
                 style={{
                   width: "100%", height: 42, borderRadius: 10,
-                  background: selectedState.keyframeStatus === "generating" ? "rgba(255,255,255,0.02)" : "rgba(239,68,68,0.10)",
-                  border: selectedState.keyframeStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(239,68,68,0.32)",
-                  color: selectedState.keyframeStatus === "generating" ? "#9B9387" : "#f87171",
+                  background: selectedState.keyframeStatus === "generating" ? "rgba(255,255,255,0.02)" : "rgba(251,146,60,0.08)",
+                  border: selectedState.keyframeStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(251,146,60,0.25)",
+                  color: selectedState.keyframeStatus === "generating" ? "#9B9387" : "#FB923C",
                   fontSize: 12, fontWeight: 700,
                   cursor: selectedState.keyframeStatus === "generating" ? "not-allowed" : "pointer",
                 }}
               >
-                {selectedState.keyframeStatus === "generating" ? "生成低風險首幀中…（20–40 秒）" : `重新產生第 ${selectedSlideNumber} 張低風險首幀圖`}
+                {selectedState.keyframeStatus === "generating" ? "生成更保守首幀中…（20–40 秒）" : `改用第 ${selectedSlideNumber} 張更保守首幀圖（Fallback）`}
               </button>
             </div>
           )}
@@ -2115,10 +2422,10 @@ export default function FinalLaunchStudioPage() {
               }}
             >
               {selectedState.keyframeStatus === "generating"
-                ? "生成 4:5 首幀中…（20–40 秒）"
+                ? "生成首幀中…（20–40 秒）"
                 : selectedState.keyframeStatus === "generated"
-                  ? (safeSelectedIndex === 1 ? `↺ 重新產生第 ${selectedSlideNumber} 張低風險首幀圖` : `↺ 重新生成第 ${selectedSlideNumber} 張首幀`)
-                  : (safeSelectedIndex === 1 ? `重新產生第 ${selectedSlideNumber} 張低風險首幀圖` : `生成第 ${selectedSlideNumber} 張首幀（OpenAI）`)}
+                  ? (safeSelectedIndex === 1 ? `↺ 改用第 ${selectedSlideNumber} 張更保守首幀圖（Fallback）` : `↺ 重新生成第 ${selectedSlideNumber} 張首幀`)
+                  : (safeSelectedIndex === 1 ? `改用第 ${selectedSlideNumber} 張更保守首幀圖（Fallback）` : `生成第 ${selectedSlideNumber} 張首幀（OpenAI）`)}
             </button>
 
             {selectedState.keyframeStatus === "failed" && (
@@ -2133,10 +2440,9 @@ export default function FinalLaunchStudioPage() {
                 </div>
                 {selectedState.lowRiskKeyframe ? (
                   <>
-                    <p style={{ color: "#4ade80", fontSize: 9, fontWeight: 700, marginTop: 4 }}>低風險首幀｜可進入 Runway 測試</p>
+                    <p style={{ color: "#FB923C", fontSize: 9, fontWeight: 700, marginTop: 4 }}>保守首幀（Fallback 模式）</p>
                     <p style={{ color: "#9B9387", fontSize: 9, marginTop: 2, lineHeight: 1.55 }}>
-                      確認無清楚人臉、手部、兩人面對面後，方可送入 Runway。
-                      <br />若圖片仍有問題，請再次重新產生。
+                      靜物場景。若診斷通過但 Runway 仍失敗，再使用此首幀測試。
                     </p>
                   </>
                 ) : (
@@ -2153,18 +2459,20 @@ export default function FinalLaunchStudioPage() {
             </p>
             <button
               onClick={() => handleGenerateMotion(safeSelectedIndex, "normal", selectedState.keyframeUrl, selectedState.lowRiskKeyframe && safeSelectedIndex === 1 ? SLIDE2_LOWRISK_MOTION_PROMPT : undefined)}
-              disabled={selectedState.keyframeStatus !== "generated" || selectedState.motionStatus === "generating"}
+              disabled={selectedState.keyframeStatus !== "generated" || selectedState.motionStatus === "generating" || slide2RunwayBlocked}
               style={{
                 width: "100%", height: 40, borderRadius: 10,
-                background: selectedState.keyframeStatus !== "generated" ? "rgba(255,255,255,0.01)" : selectedState.motionStatus === "generating" ? "rgba(255,255,255,0.02)" : selectedState.motionStatus === "generated" ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.04)",
-                border: selectedState.keyframeStatus !== "generated" ? "1px solid rgba(255,255,255,0.04)" : selectedState.motionStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : selectedState.motionStatus === "generated" ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(255,255,255,0.09)",
-                color: selectedState.keyframeStatus !== "generated" ? "#6F675E" : selectedState.motionStatus === "generating" ? "#9B9387" : selectedState.motionStatus === "generated" ? "#4ade80" : "#CFC7BA",
+                background: selectedState.keyframeStatus !== "generated" || slide2RunwayBlocked ? "rgba(255,255,255,0.01)" : selectedState.motionStatus === "generating" ? "rgba(255,255,255,0.02)" : selectedState.motionStatus === "generated" ? "rgba(34,197,94,0.06)" : "rgba(255,255,255,0.04)",
+                border: selectedState.keyframeStatus !== "generated" || slide2RunwayBlocked ? "1px solid rgba(255,255,255,0.04)" : selectedState.motionStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : selectedState.motionStatus === "generated" ? "1px solid rgba(34,197,94,0.18)" : "1px solid rgba(255,255,255,0.09)",
+                color: selectedState.keyframeStatus !== "generated" || slide2RunwayBlocked ? "#6F675E" : selectedState.motionStatus === "generating" ? "#9B9387" : selectedState.motionStatus === "generated" ? "#4ade80" : "#CFC7BA",
                 fontSize: 12, fontWeight: 700,
-                cursor: selectedState.keyframeStatus !== "generated" || selectedState.motionStatus === "generating" ? "not-allowed" : "pointer",
+                cursor: selectedState.keyframeStatus !== "generated" || selectedState.motionStatus === "generating" || slide2RunwayBlocked ? "not-allowed" : "pointer",
               }}
             >
               {selectedState.keyframeStatus !== "generated"
                 ? `生成第 ${selectedSlideNumber} 張動態｜請先產生首幀圖`
+                : slide2RunwayBlocked
+                ? `⊘ Runway 已鎖定｜${slide2RunwayBlockReason}`
                 : selectedState.motionStatus === "generating"
                 ? "從首幀生成動態中…（60–120 秒）"
                 : selectedState.motionStatus === "generated"
@@ -2234,23 +2542,23 @@ export default function FinalLaunchStudioPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {showLowRiskRecovery && (
                     <>
-                      <div style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.18)", borderRadius: 8, padding: "10px 12px" }}>
-                        <p style={{ color: "#f87171", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>
-                          第 {selectedSlideNumber} 張動態連續失敗
+                      <div style={{ background: "rgba(251,146,60,0.04)", border: "1px solid rgba(251,146,60,0.15)", borderRadius: 8, padding: "10px 12px" }}>
+                        <p style={{ color: "#FB923C", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>
+                          Fallback 選項：改用更保守首幀
                         </p>
                         <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.6 }}>
-                          不要再重試同一張首幀。請改用低風險首幀重新產生，避免繼續消耗 Runway credits。
+                          人物畫面不是自動失敗原因。請先確認診斷區所有項目通過，若 Runway 仍持續失敗再考慮此 fallback。
                         </p>
                       </div>
                       <button
                         onClick={() => handleGenerateLowRiskKeyframe(safeSelectedIndex)}
                         style={{
                           width: "100%", height: 40, borderRadius: 8,
-                          background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.28)",
-                          color: "#f87171", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                          background: "rgba(251,146,60,0.07)", border: "1px solid rgba(251,146,60,0.22)",
+                          color: "#FB923C", fontSize: 12, fontWeight: 700, cursor: "pointer",
                         }}
                       >
-                        重新產生第 {selectedSlideNumber} 張低風險首幀圖
+                        改用第 {selectedSlideNumber} 張更保守首幀圖（Fallback）
                       </button>
                     </>
                   )}
@@ -2599,6 +2907,10 @@ export default function FinalLaunchStudioPage() {
 
         {/* ── Debug Sections ────────────────────────────────────── */}
         <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>除錯功能區</p>
+
+        <CollapsibleSection title="Runway 診斷區" subtitle="Slide 1 成功 vs Slide 2 失敗比對｜不呼叫 API｜不消耗 credits">
+          <RunwayDiagnosticPanel slide1State={slideMotionStates[0]} slide2State={slideMotionStates[1]} />
+        </CollapsibleSection>
 
         <CollapsibleSection title="靜態預覽流程" subtitle="僅首幀參考｜非最終輸出｜靜態圖 ≠ 動態就緒">
           <StillPreviewPipeline

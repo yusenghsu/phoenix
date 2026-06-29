@@ -10,7 +10,13 @@ import {
   generateRunwayVideoFromKeyframe,
   RunwayFailureError,
 } from "@/lib/launch/providers/runway-provider";
-import { updateSlide, slideRouteIdToManifestKey, GENERATED_DIR } from "@/lib/launch/manifest";
+import {
+  updateSlide,
+  readManifest,
+  slideRouteIdToManifestKey,
+  GENERATED_DIR,
+  type ManifestSlide,
+} from "@/lib/launch/manifest";
 
 export const runtime = "nodejs";
 export const maxDuration = 180;
@@ -35,6 +41,7 @@ interface RequestBody {
   slide_id: string;
   keyframe_url: string;
   motion_prompt?: string;
+  motion_prompt_mode?: string;
   duration_seconds?: number;
 }
 
@@ -60,7 +67,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ status: "failed", error: "Invalid JSON body." }, { status: 400 });
   }
 
-  const { slide_id, keyframe_url, motion_prompt, duration_seconds = 5 } = body;
+  const { slide_id, keyframe_url, motion_prompt, motion_prompt_mode, duration_seconds = 5 } = body;
 
   if (!slide_id || !keyframe_url) {
     return NextResponse.json(
@@ -72,11 +79,24 @@ export async function POST(req: NextRequest) {
   const validDurations = new Set([4, 5, 6]);
   const safeSeconds = validDurations.has(duration_seconds) ? (duration_seconds as 4 | 5 | 6) : 5;
 
-  // Default motion prompt if none provided
   const defaultPrompt =
     "Turn this 4:5 vertical keyframe into a subtle cinematic motion background. " +
     "Keep the composition. Very slow push-in camera movement, minimal subject movement, " +
     "keep the left side clean and dark. No text, no logo, no fast motion.";
+
+  // Read current attempt count before generation (non-critical)
+  const manifestKey = slideRouteIdToManifestKey(slide_id);
+  let currentAttemptCount = 0;
+  if (manifestKey) {
+    try {
+      const currentManifest = await readManifest();
+      currentAttemptCount = currentManifest[manifestKey]?.motion_attempt_count ?? 0;
+    } catch { /* non-critical */ }
+  }
+
+  const safePromptMode = (["low_risk", "normal", "safe"].includes(motion_prompt_mode ?? "")
+    ? motion_prompt_mode
+    : "normal") as ManifestSlide["motion_prompt_mode"];
 
   try {
     const keyframeDataUri = await resolveToDataUri(keyframe_url);
@@ -90,7 +110,6 @@ export async function POST(req: NextRequest) {
 
     // Persist intermediate video for any slide-0[1-8]
     let localVideoUrl = video_url;
-    const manifestKey = slideRouteIdToManifestKey(slide_id);
     if (manifestKey) {
       try {
         const videoRes = await fetch(video_url);
@@ -107,6 +126,9 @@ export async function POST(req: NextRequest) {
             provider_ratio_source: "declared_runway_request_ratio",
             final_composition_status: "needed",
             final_ratio_status: "unknown",
+            motion_prompt_mode: safePromptMode,
+            motion_attempt_count: currentAttemptCount + 1,
+            last_failure: null,
           });
           console.log("[generate-motion-from-keyframe] video persisted:", localVideoUrl);
         }
@@ -131,6 +153,23 @@ export async function POST(req: NextRequest) {
         failureCode: err.failureCode,
         failureMessage: err.failureMessage,
       });
+
+      // Persist failure info to manifest (non-critical)
+      if (manifestKey) {
+        try {
+          await updateSlide(manifestKey, {
+            motion_prompt_mode: safePromptMode,
+            motion_attempt_count: currentAttemptCount + 1,
+            last_failure: {
+              failure_code: err.failureCode ?? undefined,
+              failure_message: err.failureMessage ?? undefined,
+              task_id: err.taskId,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        } catch { /* non-critical */ }
+      }
+
       return NextResponse.json(
         {
           slide_id,

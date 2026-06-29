@@ -19,6 +19,8 @@ const MANIFEST_PATH = path.join(GENERATED_DIR, "manifest.json");
 
 export interface ManifestSlide {
   keyframe_url?: string;
+  keyframe_mode?: "low_risk" | "normal";
+  low_risk_mode?: boolean;
   runway_motion_status?: "generated" | "missing";
   runway_intermediate_video_url?: string;
   runway_task_id?: string;
@@ -29,6 +31,14 @@ export interface ManifestSlide {
   final_composition_status: "needed" | "missing" | "composed";
   final_video_url?: string;
   final_ratio_status: "unknown" | "passed_4_5";
+  motion_prompt_mode?: "low_risk" | "normal" | "safe";
+  motion_attempt_count?: number;
+  last_failure?: {
+    failure_code?: string;
+    failure_message?: string;
+    task_id?: string;
+    timestamp: string;
+  } | null;
   updated_at: string;
 }
 
