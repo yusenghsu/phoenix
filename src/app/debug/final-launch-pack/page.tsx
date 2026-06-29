@@ -97,6 +97,33 @@ const SLIDE1_SAFER_KEYFRAME_NEGATIVE =
   "influencer style, overbright lighting, extreme darkness, distorted hands, extra fingers, " +
   "malformed phone, fake advertising style, stock photo look";
 
+// Slide 2 / PAIN — low-risk keyframe prompt
+// 主題：你怕的不是被拒絕，是被貼上「變現實」的標籤
+// 場景：空桌 + 手機 + 咖啡 + 模糊背景，不含人物互動，降低 Runway INTERNAL_BAD_OUTPUT 風險
+const SLIDE2_LOWRISK_KEYFRAME_PROMPT =
+  "nighttime cafe corner, an empty table with a faintly glowing phone screen — " +
+  "absolutely no readable text on phone screen — a cup of coffee placed beside it, " +
+  "the chair across the table is empty, background shows only blurry indistinct silhouettes " +
+  "and warm amber ambient lighting, mood is awkward and pressured, afraid of being misunderstood by friends, " +
+  "cinematic look, low-key lighting, black-gold-orange color grade, 4:5 vertical composition, " +
+  "large dark negative space in upper-left area reserved for Chinese text overlay, " +
+  "no people in foreground, no clear face, no clear hands, no readable text anywhere";
+
+const SLIDE2_LOWRISK_KEYFRAME_NEGATIVE =
+  "clear face, close-up face, person in foreground, detailed hands, readable text, phone message text, " +
+  "logo, signboard text, two people talking face to face, romance, couple, smiling, bright daytime, " +
+  "cheerful mood, sales presentation, office meeting, distorted face, extra fingers, deformed hands, " +
+  "coffee shop conversation, friends chatting";
+
+// Slide 2 / PAIN — low-risk motion prompt
+// 完全避免臉部 / 手部 / 人物互動動作，只做極微小的環境動態
+const SLIDE2_LOWRISK_MOTION_PROMPT =
+  "Create a very subtle cinematic motion from this vertical keyframe. Keep the scene almost still. " +
+  "Slow camera push-in only. Slight warm light flicker. Very subtle bokeh movement in the background. " +
+  "Do not animate faces. Do not animate hands. Do not create new people. Do not add text. " +
+  "Do not change the phone screen. Do not move objects dramatically. " +
+  "Preserve the composition and dark negative space for Chinese text overlay.";
+
 // Diagnostic data returned by the Runway failure route response
 interface RunwayDiagnostic {
   error: string;
@@ -137,6 +164,7 @@ interface SlideMotionState {
   recoverStatus: "idle" | "recovering" | "recovered" | "failed";
   recoverError?: string;
   recoverDiagnostic?: { attempted_endpoint?: string; runway_http_status?: number; hint?: string };
+  lowRiskKeyframe?: boolean;
 }
 
 function createEmptySlideMotionState(slideIndex: number): SlideMotionState {
@@ -1476,38 +1504,75 @@ export default function FinalLaunchStudioPage() {
       if (!res.ok) return;
       const data = (await res.json()) as {
         status: string;
-        manifest?: {
-          slide_01?: {
-            keyframe_url?: string;
-            runway_intermediate_video_url?: string;
-            final_composition_status?: string;
-            final_video_url?: string;
-            final_ratio_status?: string;
-          }
-        }
+        manifest?: Record<string, {
+          keyframe_url?: string;
+          runway_intermediate_video_url?: string;
+          final_composition_status?: string;
+          final_video_url?: string;
+          final_ratio_status?: string;
+        }>
       };
-      const slide01 = data.manifest?.slide_01;
-      if (!slide01) { setHasSavedAssets(false); return; }
-      setHasSavedAssets(true);
-      if (slide01.keyframe_url) {
-        setSlide1KeyframeUrl(slide01.keyframe_url);
-        setSlide1KeyframeStatus("generated");
+      if (!data.manifest) { setHasSavedAssets(false); return; }
+
+      // Restore slide 1 (individual state vars)
+      const slide01 = data.manifest.slide_01;
+      if (slide01) {
+        setHasSavedAssets(true);
+        if (slide01.keyframe_url) {
+          setSlide1KeyframeUrl(slide01.keyframe_url);
+          setSlide1KeyframeStatus("generated");
+        }
+        if (slide01.runway_intermediate_video_url) {
+          setMotionVideoUrls((prev) => ({ ...prev, 0: slide01.runway_intermediate_video_url! }));
+          setSlide1MotionStatus("generated");
+          setSelectedMotionSlide(0);
+          const compStatus = slide01.final_composition_status;
+          if (compStatus === "composed") setSlide1CompositionStatus("composed");
+          else if (compStatus === "needed") setSlide1CompositionStatus("needed");
+        }
+        if (slide01.final_video_url) {
+          setSlide1FinalVideoUrl(slide01.final_video_url);
+          // final_video_url existing means composition completed — override any stale status
+          setSlide1CompositionStatus("composed");
+        }
+        if (slide01.final_ratio_status === "passed_4_5") {
+          setSlide1FinalRatioStatus("passed_4_5");
+        }
       }
-      if (slide01.runway_intermediate_video_url) {
-        setMotionVideoUrls((prev) => ({ ...prev, 0: slide01.runway_intermediate_video_url! }));
-        setSlide1MotionStatus("generated");
-        setSelectedMotionSlide(0);
-        const compStatus = slide01.final_composition_status;
-        if (compStatus === "composed") setSlide1CompositionStatus("composed");
-        else if (compStatus === "needed") setSlide1CompositionStatus("needed");
+
+      // Restore slides 2-8 (otherSlideStates) in one pass
+      const otherPatches: Record<number, Partial<SlideMotionState>> = {};
+      for (let i = 1; i <= 7; i++) {
+        const config = SLIDE_MOTION_CONFIGS[i];
+        const manifestKey = config?.id ?? `slide_0${String(i + 1).padStart(2, "0")}`;
+        const slideData = data.manifest[manifestKey];
+        if (!slideData) continue;
+        const p: Partial<SlideMotionState> = {};
+        if (slideData.keyframe_url) {
+          p.keyframeUrl = slideData.keyframe_url;
+          p.keyframeStatus = "generated";
+          if (i === 1) p.lowRiskKeyframe = true; // slide 2 always uses low-risk keyframe
+        }
+        if (slideData.runway_intermediate_video_url) {
+          p.intermediateVideoUrl = slideData.runway_intermediate_video_url;
+          p.motionStatus = "generated";
+          p.providerRatioStatus = "accepted_intermediate";
+          p.compositionStatus = slideData.final_composition_status === "composed" ? "composed" : "needed";
+          setMotionVideoUrls(prev => ({ ...prev, [i]: slideData.runway_intermediate_video_url! }));
+        }
+        if (slideData.final_video_url) { p.finalVideoUrl = slideData.final_video_url; p.compositionStatus = "composed"; }
+        if (slideData.final_ratio_status === "passed_4_5") p.finalRatioStatus = "passed_4_5";
+        if (Object.keys(p).length > 0) otherPatches[i] = p;
       }
-      if (slide01.final_video_url) {
-        setSlide1FinalVideoUrl(slide01.final_video_url);
-        // final_video_url existing means composition completed — override any stale status
-        setSlide1CompositionStatus("composed");
-      }
-      if (slide01.final_ratio_status === "passed_4_5") {
-        setSlide1FinalRatioStatus("passed_4_5");
+      if (Object.keys(otherPatches).length > 0) {
+        setOtherSlideStates(prev => {
+          const next = { ...prev };
+          for (const [idxStr, patch] of Object.entries(otherPatches)) {
+            const idx = Number(idxStr);
+            next[idx] = { ...(prev[idx] ?? createEmptySlideMotionState(idx)), ...patch };
+          }
+          return next;
+        });
       }
     } catch {
       // Manifest fetch failed — non-critical, start fresh
@@ -1571,7 +1636,7 @@ export default function FinalLaunchStudioPage() {
     }
   }, [handleGenerateSlide1Keyframe, slides]);
 
-  const handleGenerateMotion = useCallback(async (slideIndex: number, promptMode: "normal" | "safe", keyframeUrl?: string) => {
+  const handleGenerateMotion = useCallback(async (slideIndex: number, promptMode: "normal" | "safe", keyframeUrl?: string, motionPromptOverride?: string) => {
     if (slideIndex === 0) {
       return promptMode === "safe" ? handleRetrySlide1MotionSafe() : handleGenerateSlide1Motion();
     }
@@ -1579,7 +1644,7 @@ export default function FinalLaunchStudioPage() {
     const config = SLIDE_MOTION_CONFIGS[slideIndex];
     const slideId = config?.slideId ?? `slide-0${String(slideIndex + 1).padStart(2, "0")}`;
     const slide = slides[slideIndex];
-    const motionPrompt = slide.motion_asset.video_generation_prompt;
+    const motionPrompt = motionPromptOverride ?? slide.motion_asset.video_generation_prompt;
     const patch = (p: Partial<SlideMotionState>) =>
       setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), ...p } }));
     patch({ motionStatus: "generating", motionError: undefined });
@@ -1699,6 +1764,39 @@ export default function FinalLaunchStudioPage() {
     }
   }, []);
 
+  // Low-risk keyframe for slide 2 / PAIN — resets motion state, uses safe scene prompt
+  const handleGenerateLowRiskKeyframe = useCallback(async (slideIndex: number) => {
+    const config = SLIDE_MOTION_CONFIGS[slideIndex];
+    const slideId = config?.slideId ?? `slide-0${String(slideIndex + 1).padStart(2, "0")}`;
+    const patch = (p: Partial<SlideMotionState>) =>
+      setOtherSlideStates(prev => ({ ...prev, [slideIndex]: { ...(prev[slideIndex] ?? createEmptySlideMotionState(slideIndex)), ...p } }));
+    patch({
+      keyframeStatus: "generating",
+      keyframeUrl: undefined,
+      motionStatus: "missing",
+      motionError: undefined,
+      motionAttempts: [],
+      providerRatioStatus: "unknown",
+      compositionStatus: "missing",
+      lowRiskKeyframe: true,
+    });
+    try {
+      const res = await fetch("/api/debug/final-launch/generate-slide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slide_id: slideId, prompt: SLIDE2_LOWRISK_KEYFRAME_PROMPT, negative_prompt: SLIDE2_LOWRISK_KEYFRAME_NEGATIVE }),
+      });
+      const data = (await res.json()) as { status: string; image_url?: string; error?: string };
+      if (data.status === "generated" && data.image_url) {
+        patch({ keyframeStatus: "generated", keyframeUrl: data.image_url });
+      } else {
+        patch({ keyframeStatus: "failed" });
+      }
+    } catch {
+      patch({ keyframeStatus: "failed" });
+    }
+  }, []);
+
   // Validate Runway intermediate output ratio — dual layer:
   // 1. Browser onLoadedMetadata (dimensions from actual video)
   // 2. 8-second fallback to declared Runway request ratio (832:1104) if metadata unavailable
@@ -1815,6 +1913,8 @@ export default function FinalLaunchStudioPage() {
   const effectiveSelectedCompositionStatus = getEffectiveCompositionStatus(selectedState);
   const selectedHasSavedAssets = !!(selectedState.keyframeUrl || selectedState.finalVideoUrl || selectedState.intermediateVideoUrl);
   const selectedRecoverTaskId = safeSelectedIndex === 0 ? recoverTaskId : (selectedState.recoverTaskId ?? "");
+  const consecutiveFailedMotionAttempts = selectedState.motionAttempts.filter(a => a.status === "failed").length;
+  const showLowRiskRecovery = safeSelectedIndex === 1 && selectedState.motionStatus !== "generated";
 
   return (
     <div style={{ minHeight: "100vh", background: "#0C0A08", padding: "40px 16px 100px" }}>
@@ -1910,6 +2010,32 @@ export default function FinalLaunchStudioPage() {
             )}
           </div>
 
+          {/* Slide 2 low-risk recovery banner — shown whenever motion has failed */}
+          {showLowRiskRecovery && (
+            <div style={{ marginBottom: 14, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.22)", borderRadius: 12, padding: "14px 16px" }}>
+              <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+                第 {selectedSlideNumber} 張動態連續失敗 — 請改用低風險首幀圖
+              </p>
+              <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.65, marginBottom: 12 }}>
+                原始首幀含清楚人物、手部或兩人互動，Runway 容易拒絕此類畫面。請改用「空桌 + 手機 + 咖啡 + 模糊背景」構圖，避免繼續消耗 Runway credits。
+              </p>
+              <button
+                onClick={() => handleGenerateLowRiskKeyframe(safeSelectedIndex)}
+                disabled={selectedState.keyframeStatus === "generating"}
+                style={{
+                  width: "100%", height: 42, borderRadius: 10,
+                  background: selectedState.keyframeStatus === "generating" ? "rgba(255,255,255,0.02)" : "rgba(239,68,68,0.10)",
+                  border: selectedState.keyframeStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : "1px solid rgba(239,68,68,0.32)",
+                  color: selectedState.keyframeStatus === "generating" ? "#9B9387" : "#f87171",
+                  fontSize: 12, fontWeight: 700,
+                  cursor: selectedState.keyframeStatus === "generating" ? "not-allowed" : "pointer",
+                }}
+              >
+                {selectedState.keyframeStatus === "generating" ? "生成低風險首幀中…（20–40 秒）" : `重新產生第 ${selectedSlideNumber} 張低風險首幀圖`}
+              </button>
+            </div>
+          )}
+
           {/* Recover Existing Runway Task — dev-only */}
           {selectedState.motionStatus !== "generated" && (
             <div style={{ marginBottom: 14, background: "rgba(59,130,246,0.04)", border: "1px solid rgba(59,130,246,0.12)", borderRadius: 10, padding: "12px 14px" }}>
@@ -1978,17 +2104,21 @@ export default function FinalLaunchStudioPage() {
               步驟 1｜生成 4:5 首幀（OpenAI）
             </p>
             <button
-              onClick={() => handleGenerateKeyframe(safeSelectedIndex)}
+              onClick={() => safeSelectedIndex === 1 ? handleGenerateLowRiskKeyframe(safeSelectedIndex) : handleGenerateKeyframe(safeSelectedIndex)}
               disabled={selectedState.keyframeStatus === "generating"}
               style={{
                 width: "100%", height: 40, borderRadius: 10,
-                background: selectedState.keyframeStatus === "generating" ? "rgba(255,255,255,0.02)" : selectedState.keyframeStatus === "generated" ? "rgba(249,115,22,0.06)" : "rgba(255,255,255,0.04)",
-                border: selectedState.keyframeStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : selectedState.keyframeStatus === "generated" ? "1px solid rgba(249,115,22,0.18)" : "1px solid rgba(255,255,255,0.09)",
-                color: selectedState.keyframeStatus === "generating" ? "#9B9387" : selectedState.keyframeStatus === "generated" ? "#FB923C" : "#CFC7BA",
+                background: selectedState.keyframeStatus === "generating" ? "rgba(255,255,255,0.02)" : selectedState.keyframeStatus === "generated" ? (safeSelectedIndex === 1 ? "rgba(239,68,68,0.08)" : "rgba(249,115,22,0.06)") : (safeSelectedIndex === 1 ? "rgba(239,68,68,0.06)" : "rgba(255,255,255,0.04)"),
+                border: selectedState.keyframeStatus === "generating" ? "1px solid rgba(255,255,255,0.06)" : selectedState.keyframeStatus === "generated" ? (safeSelectedIndex === 1 ? "1px solid rgba(239,68,68,0.22)" : "1px solid rgba(249,115,22,0.18)") : (safeSelectedIndex === 1 ? "1px solid rgba(239,68,68,0.18)" : "1px solid rgba(255,255,255,0.09)"),
+                color: selectedState.keyframeStatus === "generating" ? "#9B9387" : selectedState.keyframeStatus === "generated" ? (safeSelectedIndex === 1 ? "#f87171" : "#FB923C") : (safeSelectedIndex === 1 ? "#f87171" : "#CFC7BA"),
                 fontSize: 12, fontWeight: 700, cursor: selectedState.keyframeStatus === "generating" ? "not-allowed" : "pointer",
               }}
             >
-              {selectedState.keyframeStatus === "generating" ? "生成 4:5 首幀中…（20–40 秒）" : selectedState.keyframeStatus === "generated" ? `↺ 重新生成第 ${selectedSlideNumber} 張首幀` : `生成第 ${selectedSlideNumber} 張首幀（OpenAI）`}
+              {selectedState.keyframeStatus === "generating"
+                ? "生成 4:5 首幀中…（20–40 秒）"
+                : selectedState.keyframeStatus === "generated"
+                  ? (safeSelectedIndex === 1 ? `↺ 重新產生第 ${selectedSlideNumber} 張低風險首幀圖` : `↺ 重新生成第 ${selectedSlideNumber} 張首幀`)
+                  : (safeSelectedIndex === 1 ? `重新產生第 ${selectedSlideNumber} 張低風險首幀圖` : `生成第 ${selectedSlideNumber} 張首幀（OpenAI）`)}
             </button>
 
             {selectedState.keyframeStatus === "failed" && (
@@ -1997,11 +2127,21 @@ export default function FinalLaunchStudioPage() {
 
             {selectedState.keyframeUrl && selectedState.keyframeStatus === "generated" && (
               <div style={{ marginTop: 10 }}>
-                <div style={{ position: "relative", width: 120, aspectRatio: "4 / 5", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(255,255,255,0.10)" }}>
+                <div style={{ position: "relative", width: 120, aspectRatio: "4 / 5", borderRadius: 10, overflow: "hidden", border: `1px solid ${selectedState.lowRiskKeyframe ? "rgba(34,197,94,0.30)" : "rgba(255,255,255,0.10)"}` }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={selectedState.keyframeUrl} alt={`第 ${selectedSlideNumber} 張首幀`} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 </div>
-                <p style={{ color: "#9B9387", fontSize: 9, marginTop: 4 }}>僅為靜態首幀｜非最終動態輸出</p>
+                {selectedState.lowRiskKeyframe ? (
+                  <>
+                    <p style={{ color: "#4ade80", fontSize: 9, fontWeight: 700, marginTop: 4 }}>低風險首幀｜可進入 Runway 測試</p>
+                    <p style={{ color: "#9B9387", fontSize: 9, marginTop: 2, lineHeight: 1.55 }}>
+                      確認無清楚人臉、手部、兩人面對面後，方可送入 Runway。
+                      <br />若圖片仍有問題，請再次重新產生。
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ color: "#9B9387", fontSize: 9, marginTop: 4 }}>僅為靜態首幀｜非最終動態輸出</p>
+                )}
               </div>
             )}
           </div>
@@ -2012,7 +2152,7 @@ export default function FinalLaunchStudioPage() {
               步驟 2｜從首幀生成動態（Runway）
             </p>
             <button
-              onClick={() => handleGenerateMotion(safeSelectedIndex, "normal", selectedState.keyframeUrl)}
+              onClick={() => handleGenerateMotion(safeSelectedIndex, "normal", selectedState.keyframeUrl, selectedState.lowRiskKeyframe && safeSelectedIndex === 1 ? SLIDE2_LOWRISK_MOTION_PROMPT : undefined)}
               disabled={selectedState.keyframeStatus !== "generated" || selectedState.motionStatus === "generating"}
               style={{
                 width: "100%", height: 40, borderRadius: 10,
@@ -2092,16 +2232,40 @@ export default function FinalLaunchStudioPage() {
 
                 {/* Recovery actions */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <button
-                    onClick={() => handleGenerateMotion(safeSelectedIndex, "safe", selectedState.keyframeUrl)}
-                    style={{
-                      width: "100%", height: 36, borderRadius: 8,
-                      background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.22)",
-                      color: "#FB923C", fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    }}
-                  >
-                    使用安全提示詞重試動態
-                  </button>
+                  {showLowRiskRecovery && (
+                    <>
+                      <div style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.18)", borderRadius: 8, padding: "10px 12px" }}>
+                        <p style={{ color: "#f87171", fontSize: 10, fontWeight: 700, marginBottom: 4 }}>
+                          第 {selectedSlideNumber} 張動態連續失敗
+                        </p>
+                        <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.6 }}>
+                          不要再重試同一張首幀。請改用低風險首幀重新產生，避免繼續消耗 Runway credits。
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleGenerateLowRiskKeyframe(safeSelectedIndex)}
+                        style={{
+                          width: "100%", height: 40, borderRadius: 8,
+                          background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.28)",
+                          color: "#f87171", fontSize: 12, fontWeight: 700, cursor: "pointer",
+                        }}
+                      >
+                        重新產生第 {selectedSlideNumber} 張低風險首幀圖
+                      </button>
+                    </>
+                  )}
+                  {!showLowRiskRecovery && (
+                    <button
+                      onClick={() => handleGenerateMotion(safeSelectedIndex, "safe", selectedState.keyframeUrl, selectedState.lowRiskKeyframe && safeSelectedIndex === 1 ? SLIDE2_LOWRISK_MOTION_PROMPT : undefined)}
+                      style={{
+                        width: "100%", height: 36, borderRadius: 8,
+                        background: "rgba(249,115,22,0.08)", border: "1px solid rgba(249,115,22,0.22)",
+                        color: "#FB923C", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                      }}
+                    >
+                      使用安全提示詞重試動態
+                    </button>
+                  )}
                   {safeSelectedIndex === 0 && (
                     <button
                       onClick={handleRegenerateSaferKeyframe}
