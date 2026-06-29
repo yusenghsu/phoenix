@@ -74,7 +74,16 @@ export default function DailyRunsDebugPage() {
   const [actionPending, setActionPending] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [cronPending, setCronPending] = useState<"ideas" | "generate" | "publish" | null>(null);
-  const [cronResult, setCronResult] = useState<{ job_type: string; status: string; message: string } | null>(null);
+  const [cronResult, setCronResult] = useState<{
+    ok?: boolean;
+    job_type: string;
+    status: string;
+    message: string;
+    stage?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    devHint?: string;
+  } | null>(null);
 
   const fetchDetails = useCallback(async (runId: string) => {
     try {
@@ -155,21 +164,41 @@ export default function DailyRunsDebugPage() {
   const handleTestCron = async (type: "ideas" | "generate" | "publish") => {
     setCronPending(type);
     setCronResult(null);
-    const path =
-      type === "ideas" ? "/api/cron/daily-ideas"
-      : type === "generate" ? "/api/cron/daily-generate"
-      : "/api/cron/daily-publish";
     try {
-      const res = await fetch(path);
-      const data = (await res.json()) as { job_type?: string; status?: string; message?: string };
+      const res = await fetch("/api/debug/cron-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        job_type?: string;
+        status?: string;
+        message?: string;
+        stage?: string;
+        errorCode?: string;
+        errorMessage?: string;
+        devHint?: string;
+        error?: string;
+      };
       setCronResult({
+        ok: data.ok ?? res.ok,
         job_type: data.job_type ?? type,
         status: data.status ?? (res.ok ? "ok" : "error"),
-        message: data.message ?? "",
+        message: data.message ?? data.error ?? "",
+        stage: data.stage,
+        errorCode: data.errorCode,
+        errorMessage: data.errorMessage,
+        devHint: data.devHint,
       });
       await fetchToday();
     } catch (err) {
-      setCronResult({ job_type: type, status: "error", message: err instanceof Error ? err.message : String(err) });
+      setCronResult({
+        ok: false,
+        job_type: type,
+        status: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
     } finally {
       setCronPending(null);
     }
@@ -413,12 +442,21 @@ export default function DailyRunsDebugPage() {
             ))}
           </div>
           {cronResult && (
-            <div style={{ marginTop: 12, padding: "10px 12px", background: cronResult.status === "error" ? "rgba(239,68,68,0.06)" : "rgba(74,222,128,0.05)", border: `1px solid ${cronResult.status === "error" ? "rgba(239,68,68,0.20)" : "rgba(74,222,128,0.15)"}`, borderRadius: 9 }}>
-              <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>{cronResult.job_type}</p>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ marginTop: 12, padding: "10px 12px", background: cronResult.ok === false ? "rgba(239,68,68,0.06)" : "rgba(74,222,128,0.05)", border: `1px solid ${cronResult.ok === false ? "rgba(239,68,68,0.20)" : "rgba(74,222,128,0.15)"}`, borderRadius: 9, display: "flex", flexDirection: "column", gap: 5 }}>
+              <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase" }}>{cronResult.job_type}</p>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <StatusBadge status={cronResult.status} />
                 {cronResult.message && <span style={{ color: "#CFC7BA", fontSize: 11 }}>{cronResult.message}</span>}
               </div>
+              {cronResult.stage && (
+                <p style={{ color: "#9B9387", fontSize: 10 }}>stage: <span style={{ color: "#FB923C", fontFamily: "monospace" }}>{cronResult.stage}</span></p>
+              )}
+              {cronResult.errorMessage && (
+                <p style={{ color: "#f87171", fontSize: 10, fontFamily: "monospace", wordBreak: "break-all" }}>{cronResult.errorMessage}</p>
+              )}
+              {cronResult.devHint && (
+                <p style={{ color: "#6F675E", fontSize: 10 }}>{cronResult.devHint}</p>
+              )}
             </div>
           )}
         </div>
