@@ -846,20 +846,29 @@ export default function DailyRunsDebugPage() {
                       };
                       error_code?: string;
                       error_message?: string;
+                      container_ids_count?: number;
+                      carousel_container_id?: string;
+                      error_stage?: string;
                     };
                     const pf = meta.preflight;
+                    const isRealPublish = pf?.autoPublishEnabled === true;
                     return (
                       <div key={j.id} style={{ padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
                         {/* Header */}
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
-                          <span style={{ color: "#CFC7BA", fontSize: 12, fontWeight: 700 }}>{j.platform}</span>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <span style={{ color: "#CFC7BA", fontSize: 12, fontWeight: 700 }}>{j.platform}</span>
+                            <span style={{ fontSize: 9, color: isRealPublish ? "#4ade80" : "#9B9387", background: isRealPublish ? "rgba(74,222,128,0.08)" : "rgba(255,255,255,0.04)", border: `1px solid ${isRealPublish ? "rgba(74,222,128,0.20)" : "rgba(255,255,255,0.08)"}`, borderRadius: 5, padding: "2px 6px" }}>
+                              {isRealPublish ? "Real publish" : "Dry-run mode"}
+                            </span>
+                          </div>
                           <StatusBadge status={j.status} />
                         </div>
                         {/* Timestamps */}
                         <p style={{ color: "#6F675E", fontSize: 9, marginBottom: 5 }}>
                           排程：{j.scheduled_at?.slice(0, 16) ?? "—"}
                           {j.published_at && ` · 發布：${j.published_at.slice(0, 16)}`}
-                          {j.platform_media_id && <span style={{ color: "#4ade80" }}> · ID: {j.platform_media_id}</span>}
+                          {j.platform_media_id && <span style={{ color: "#4ade80" }}> · media_id: {j.platform_media_id}</span>}
                         </p>
                         {/* Caption preview */}
                         {j.caption && (
@@ -883,15 +892,30 @@ export default function DailyRunsDebugPage() {
                               </p>
                               {(pf.blockedUrls ?? []).length > 0 && (
                                 <p style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace", marginTop: 2 }}>
-                                  blocked: {pf.blockedUrls![0].slice(0, 50)}{(pf.blockedUrls!.length > 1 ? ` +${pf.blockedUrls!.length - 1} more` : "")}
+                                  blocked: {pf.blockedUrls![0].slice(0, 50)}{pf.blockedUrls!.length > 1 ? ` +${pf.blockedUrls!.length - 1} more` : ""}
                                 </p>
                               )}
                             </div>
                           </div>
                         )}
+                        {/* Container info (shown after real publish attempt) */}
+                        {(meta.container_ids_count != null || meta.carousel_container_id) && (
+                          <div style={{ marginBottom: 6, padding: "6px 9px", background: "rgba(255,255,255,0.02)", borderRadius: 7 }}>
+                            <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 4 }}>IG Containers</p>
+                            {meta.container_ids_count != null && (
+                              <p style={{ fontSize: 10, color: "#CFC7BA" }}>item containers: {meta.container_ids_count}</p>
+                            )}
+                            {meta.carousel_container_id && (
+                              <p style={{ fontSize: 9, color: "#9B9387", fontFamily: "monospace", marginTop: 2 }}>
+                                carousel: {meta.carousel_container_id}
+                              </p>
+                            )}
+                          </div>
+                        )}
                         {/* Error / status reason */}
                         {(j.error_code || meta.error_message) && (
                           <div style={{ padding: "6px 8px", background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 6 }}>
+                            {meta.error_stage && <p style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace", marginBottom: 2 }}>stage: {meta.error_stage}</p>}
                             {j.error_code && <p style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace", marginBottom: 2 }}>{j.error_code}</p>}
                             {meta.error_message && <p style={{ color: "#9B9387", fontSize: 10 }}>{meta.error_message}</p>}
                           </div>
@@ -926,7 +950,7 @@ export default function DailyRunsDebugPage() {
         {/* Cron Test Panel */}
         <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 18px", marginTop: 24 }}>
           <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Cron Test Panel</p>
-          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 10 }}>Debug only. 03:00 calls OpenAI. 17:00 calls OpenAI（keyframe）+ Runway（motion）— 消耗 credit。不呼叫 LINE / IG。</p>
+          <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 10 }}>Debug only. 03:00 calls OpenAI. 17:00 calls OpenAI（keyframe）+ Runway（motion）— 消耗 credit。20:00 calls Instagram only if PHOENIX_AUTO_PUBLISH_ENABLED=true + META env complete。不呼叫 LINE。</p>
           {/* Stuck state warning */}
           {run && run.status === "ideas_generating" && (!details || details.candidates.length === 0) && (
             <div style={{ marginBottom: 12, padding: "8px 12px", background: "rgba(249,115,22,0.07)", border: "1px solid rgba(249,115,22,0.22)", borderRadius: 9 }}>

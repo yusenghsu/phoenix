@@ -549,11 +549,11 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
 }
 
 // ── daily-publish ─────────────────────────────────────────────────────────────
-// Instagram carousel publish preflight.
-// v1: dry-run / preflight only — never calls Instagram.
-// Safety switch: PHOENIX_AUTO_PUBLISH_ENABLED must = "true" to proceed past dry-run.
-// Blocked by: local media URLs, missing META env, safety switch.
-// No LINE, no real IG post in v1.
+// Instagram carousel publish.
+// Safety switch: PHOENIX_AUTO_PUBLISH_ENABLED must = "true" AND META env complete to proceed.
+// Dry-run if: safety switch off, missing META env, or local media URLs.
+// Real publish if: all gates pass — creates 8 item containers → carousel → media_publish.
+// No LINE.
 
 export async function runDailyPublish(devMode: boolean): Promise<CronRunResult> {
   const runDate = getTaiwanRunDate();
@@ -680,6 +680,9 @@ export async function runDailyPublish(devMode: boolean): Promise<CronRunResult> 
         preflight: publishResult.preflight,
         error_code: publishResult.errorCode,
         error_message: publishResult.errorMessage,
+        container_ids_count: publishResult.containerIds.length,
+        carousel_container_id: publishResult.carouselContainerId,
+        ...(publishResult.stage ? { error_stage: publishResult.stage } : {}),
       },
     });
 
