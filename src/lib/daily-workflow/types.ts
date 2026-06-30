@@ -50,6 +50,7 @@ export type PublishStatus =
   | "failed"
   | "skipped"
   | "dry_run"
+  | "dry_run_ready"
   | "dry_run_missing_env"
   | "blocked_local_media_url";
 

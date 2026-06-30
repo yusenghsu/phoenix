@@ -39,7 +39,7 @@ function formatElapsed(startAt: string | null | undefined): string {
 
 function StatusBadge({ status }: { status: string }) {
   const color =
-    status === "published" ? "#4ade80"
+    status === "published" || status === "dry_run_ready" ? "#4ade80"
     : status === "failed" ? "#f87171"
     : status === "idle" ? "#9B9387"
     : status === "ideas_ready" || status === "selected" || status === "ready_to_publish" ? "#FB923C"
@@ -78,6 +78,25 @@ function SlideRow({ s }: { s: CarouselSlide }) {
   );
 }
 
+// ── Storage sync result types (mirrors StorageSyncResult from storage-sync.ts) ─
+
+interface StorageSlideSyncResult {
+  slideNo: number;
+  status: string;
+  publicUrl?: string;
+  errorMessage?: string;
+}
+
+interface StorageSyncResult {
+  ok: boolean;
+  uploaded: number;
+  skipped: number;
+  failed: number;
+  slides: StorageSlideSyncResult[];
+  bucketName: string;
+  errorMessage?: string;
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 interface Details {
@@ -100,6 +119,8 @@ export default function DailyRunsDebugPage() {
   const [cronPending, setCronPending] = useState<"ideas" | "generate" | "publish" | "force_ideas" | null>(null);
   const [confirmForceRegen, setConfirmForceRegen] = useState(false);
   const [confirmResetGeneration, setConfirmResetGeneration] = useState(false);
+  const [syncPending, setSyncPending] = useState(false);
+  const [syncResult, setSyncResult] = useState<StorageSyncResult | null>(null);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -359,6 +380,53 @@ export default function DailyRunsDebugPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActionPending(false);
+    }
+  };
+
+  const handleSyncStorage = async () => {
+    if (!run || syncPending) return;
+    setSyncPending(true);
+    setSyncResult(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/debug/daily-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sync_final_videos_to_storage", run_id: run.id }),
+      });
+      const data = (await res.json()) as {
+        status: string;
+        syncResult?: StorageSyncResult;
+        storage_mode?: "supabase" | "local";
+        candidates?: TopicCandidate[];
+        slides?: CarouselSlide[];
+        publishJobs?: PublishJob[];
+        events?: JobEvent[];
+        error?: string;
+      };
+      if (data.status === "ok") {
+        if (data.syncResult) setSyncResult(data.syncResult);
+        if (data.storage_mode) setStorageMode(data.storage_mode);
+        setDetails({
+          candidates: data.candidates ?? details?.candidates ?? [],
+          slides: data.slides ?? details?.slides ?? [],
+          publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
+          events: data.events ?? details?.events ?? [],
+        });
+      } else {
+        setSyncResult({
+          ok: false, uploaded: 0, skipped: 0, failed: 0, slides: [],
+          bucketName: "phoenix-generated-assets", errorMessage: data.error,
+        });
+      }
+    } catch (err) {
+      setSyncResult({
+        ok: false, uploaded: 0, skipped: 0, failed: 0, slides: [],
+        bucketName: "phoenix-generated-assets",
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setSyncPending(false);
     }
   };
 
@@ -674,6 +742,92 @@ export default function DailyRunsDebugPage() {
                 </div>
               )}
             </SectionCard>
+
+            {/* Storage / IG Media URLs */}
+            {details && details.slides.length > 0 && (() => {
+              const readySlides = details.slides.filter(s => s.final_ratio_status === "passed_4_5");
+              const publicSlides = readySlides.filter(s => s.final_video_url?.startsWith("https://"));
+              const allPublic = readySlides.length === 8 && publicSlides.length === 8;
+              const hasLocalSlides = readySlides.some(s => s.final_video_url && !s.final_video_url.startsWith("https://"));
+              return (
+                <SectionCard title={`Storage / IG Media URLs（${publicSlides.length} / ${readySlides.length} public）`}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 3 }}>Bucket</p>
+                      <p style={{ color: "#CFC7BA", fontSize: 11, fontFamily: "monospace" }}>{syncResult?.bucketName ?? "phoenix-generated-assets"}</p>
+                    </div>
+                    {allPublic && (
+                      <span style={{ background: "rgba(74,222,128,0.10)", border: "1px solid rgba(74,222,128,0.25)", borderRadius: 8, padding: "4px 10px", color: "#4ade80", fontSize: 10, fontWeight: 700 }}>
+                        8 / 8 PUBLIC ✓
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Per-slide URL status */}
+                  <div style={{ marginBottom: 12 }}>
+                    {readySlides.map((s) => {
+                      const isPublic = s.final_video_url?.startsWith("https://");
+                      return (
+                        <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                          <span style={{ color: "#6F675E", fontFamily: "monospace", fontSize: 10, width: 20, flexShrink: 0 }}>{String(s.slide_no).padStart(2, "0")}</span>
+                          <span style={{ color: isPublic ? "#4ade80" : "#f87171", fontSize: 10, width: 14, flexShrink: 0 }}>{isPublic ? "✓" : "✗"}</span>
+                          {isPublic ? (
+                            <span style={{ color: "#6F675E", fontSize: 9, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 400 }}>
+                              {s.final_video_url}
+                            </span>
+                          ) : (
+                            <span style={{ color: "#9B9387", fontSize: 9, fontFamily: "monospace" }}>
+                              {s.final_video_url ?? "—"}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {readySlides.length === 0 && (
+                      <p style={{ color: "#6F675E", fontSize: 11 }}>尚無 READY slides — 等待 17:00 生成</p>
+                    )}
+                  </div>
+
+                  {/* Sync button */}
+                  {readySlides.length > 0 && (
+                    <div>
+                      <button
+                        onClick={handleSyncStorage}
+                        disabled={syncPending || allPublic}
+                        style={{
+                          height: 38, paddingLeft: 16, paddingRight: 16, borderRadius: 9, marginBottom: 6,
+                          background: allPublic ? "rgba(74,222,128,0.04)" : syncPending ? "rgba(255,255,255,0.04)" : "rgba(96,165,250,0.07)",
+                          border: `1px solid ${allPublic ? "rgba(74,222,128,0.15)" : syncPending ? "rgba(255,255,255,0.08)" : "rgba(96,165,250,0.20)"}`,
+                          color: allPublic ? "#4ade80" : syncPending ? "#6F675E" : "#60a5fa",
+                          fontSize: 12, fontWeight: 600,
+                          cursor: syncPending || allPublic ? "not-allowed" : "pointer",
+                          display: "block", width: "100%", textAlign: "left",
+                        }}
+                      >
+                        {syncPending ? "上傳中…" : allPublic ? "✓ 全部已上傳到 Supabase Storage" : hasLocalSlides ? `上傳 ${readySlides.length - publicSlides.length} 張 final MP4 到 Supabase Storage（Debug）` : "上傳 8 張 final MP4 到 Supabase Storage（Debug）"}
+                      </button>
+                      <p style={{ color: "#6F675E", fontSize: 9, lineHeight: 1.5 }}>
+                        Debug only. 上傳已存在的 final MP4。不呼叫 Instagram。不重新生成影片。
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Sync result */}
+                  {syncResult && (
+                    <div style={{ marginTop: 10, padding: "10px 12px", background: syncResult.ok ? "rgba(74,222,128,0.05)" : "rgba(239,68,68,0.06)", border: `1px solid ${syncResult.ok ? "rgba(74,222,128,0.15)" : "rgba(239,68,68,0.20)"}`, borderRadius: 8 }}>
+                      <div style={{ display: "flex", gap: 12, marginBottom: 6 }}>
+                        <span style={{ color: "#4ade80", fontSize: 10 }}>↑ {syncResult.uploaded} uploaded</span>
+                        <span style={{ color: "#6F675E", fontSize: 10 }}>→ {syncResult.skipped} skipped</span>
+                        {syncResult.failed > 0 && <span style={{ color: "#f87171", fontSize: 10 }}>✗ {syncResult.failed} failed</span>}
+                      </div>
+                      {syncResult.errorMessage && (
+                        <p style={{ color: "#f87171", fontSize: 10, fontFamily: "monospace", wordBreak: "break-all" }}>{syncResult.errorMessage}</p>
+                      )}
+                    </div>
+                  )}
+                </SectionCard>
+              );
+            })()}
 
             {/* Publish Jobs */}
             <SectionCard title="發布任務">

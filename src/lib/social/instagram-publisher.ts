@@ -91,15 +91,15 @@ export async function publishInstagramCarousel(
     };
   }
 
-  // 2. Auto-publish safety switch not enabled
+  // 2. Auto-publish safety switch not enabled (media URLs are all public at this point)
   if (!autoPublishEnabled) {
     return {
       ...base,
       ok: true,
       dryRun: true,
-      status: "dry_run",
+      status: "dry_run_ready",
       errorCode: "auto_publish_disabled",
-      errorMessage: "PHOENIX_AUTO_PUBLISH_ENABLED is not set to true — dry run only",
+      errorMessage: "All media URLs are public. Auto publish disabled — dry run ready.",
     };
   }
 

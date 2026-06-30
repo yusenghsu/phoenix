@@ -12,6 +12,7 @@ import {
   getTaiwanDateString,
   resetGenerationStatus,
 } from "@/lib/daily-workflow/service";
+import { syncDailyRunFinalVideosToStorage } from "@/lib/daily-workflow/storage-sync";
 import { createServerClient } from "@/lib/supabase/server";
 import {
   localGetOrCreateRun,
@@ -184,6 +185,15 @@ export async function POST(req: NextRequest) {
 
       const details = await getRunDetails(body.run_id);
       return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details, run });
+    }
+
+    if (body.action === "sync_final_videos_to_storage" && body.run_id) {
+      if (!supabaseReady) {
+        return NextResponse.json({ error: "Supabase not available." }, { status: 503 });
+      }
+      const syncResult = await syncDailyRunFinalVideosToStorage(body.run_id);
+      const details = await getRunDetails(body.run_id);
+      return NextResponse.json({ status: "ok", storage_mode: "supabase", syncResult, ...details });
     }
 
     return NextResponse.json({ error: "Unknown action." }, { status: 400 });
