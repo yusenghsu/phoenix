@@ -12,6 +12,7 @@ import type {
   CarouselSlide,
   GeneratedAsset,
   PublishJob,
+  PublishStatus,
   JobEvent,
   CreateTopicCandidateInput,
   CreateOrUpdateSlideInput,
@@ -313,6 +314,30 @@ export async function createGeneratedAsset(
 }
 
 // ── Publish Jobs ──────────────────────────────────────────────────────────────
+
+export async function updatePublishJobById(
+  jobId: string,
+  payload: Partial<{
+    status: PublishStatus;
+    scheduled_at: string;
+    published_at: string;
+    platform_media_id: string;
+    caption: string;
+    error_code: string | null;
+    error_message: string | null;
+    metadata: Record<string, unknown>;
+  }>
+): Promise<PublishJob> {
+  const db = requireClient();
+  const { data, error } = await db
+    .from("phoenix_publish_jobs")
+    .update({ ...payload, updated_at: new Date().toISOString() })
+    .eq("id", jobId)
+    .select()
+    .single();
+  if (error || !data) throw new Error(`Failed to update publish job: ${error?.message}`);
+  return data as PublishJob;
+}
 
 export async function createPublishJob(
   payload: CreatePublishJobInput

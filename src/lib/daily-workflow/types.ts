@@ -42,7 +42,16 @@ export type AssetType =
 // ── Publish platform ──────────────────────────────────────────────────────────
 
 export type PublishPlatform = "instagram";
-export type PublishStatus = "pending" | "queued" | "publishing" | "published" | "failed" | "skipped";
+export type PublishStatus =
+  | "pending"
+  | "queued"
+  | "publishing"
+  | "published"
+  | "failed"
+  | "skipped"
+  | "dry_run"
+  | "dry_run_missing_env"
+  | "blocked_local_media_url";
 
 // ── Domain models ─────────────────────────────────────────────────────────────
 

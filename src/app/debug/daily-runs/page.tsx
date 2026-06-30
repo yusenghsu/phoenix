@@ -680,13 +680,71 @@ export default function DailyRunsDebugPage() {
               {!details || details.publishJobs.length === 0 ? (
                 <p style={{ color: "#6F675E", fontSize: 11 }}>尚無發布任務 — 等待 8/8 READY 後 20:00 觸發</p>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {details.publishJobs.map((j) => (
-                    <div key={j.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                      <p style={{ color: "#CFC7BA", fontSize: 11 }}>{j.platform} · {j.scheduled_at?.slice(0, 16) ?? "—"}</p>
-                      <StatusBadge status={j.status} />
-                    </div>
-                  ))}
+                <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                  {details.publishJobs.map((j) => {
+                    const meta = (j.metadata ?? {}) as {
+                      dry_run?: boolean;
+                      preflight?: {
+                        autoPublishEnabled?: boolean;
+                        hasMetaConfig?: boolean;
+                        mediaUrlsPublic?: boolean;
+                        blockedUrls?: string[];
+                      };
+                      error_code?: string;
+                      error_message?: string;
+                    };
+                    const pf = meta.preflight;
+                    return (
+                      <div key={j.id} style={{ padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        {/* Header */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
+                          <span style={{ color: "#CFC7BA", fontSize: 12, fontWeight: 700 }}>{j.platform}</span>
+                          <StatusBadge status={j.status} />
+                        </div>
+                        {/* Timestamps */}
+                        <p style={{ color: "#6F675E", fontSize: 9, marginBottom: 5 }}>
+                          排程：{j.scheduled_at?.slice(0, 16) ?? "—"}
+                          {j.published_at && ` · 發布：${j.published_at.slice(0, 16)}`}
+                          {j.platform_media_id && <span style={{ color: "#4ade80" }}> · ID: {j.platform_media_id}</span>}
+                        </p>
+                        {/* Caption preview */}
+                        {j.caption && (
+                          <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5, marginBottom: 6 }}>
+                            {j.caption.slice(0, 100)}{j.caption.length > 100 ? "…" : ""}
+                          </p>
+                        )}
+                        {/* Preflight checklist */}
+                        {pf && (
+                          <div style={{ marginBottom: 6, padding: "7px 9px", background: "rgba(255,255,255,0.02)", borderRadius: 7 }}>
+                            <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 5 }}>Preflight</p>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                              <p style={{ fontSize: 10, color: pf.autoPublishEnabled ? "#4ade80" : "#9B9387" }}>
+                                {pf.autoPublishEnabled ? "✓" : "✗"} PHOENIX_AUTO_PUBLISH_ENABLED
+                              </p>
+                              <p style={{ fontSize: 10, color: pf.hasMetaConfig ? "#4ade80" : "#9B9387" }}>
+                                {pf.hasMetaConfig ? "✓" : "✗"} META_ACCESS_TOKEN + META_IG_USER_ID
+                              </p>
+                              <p style={{ fontSize: 10, color: pf.mediaUrlsPublic ? "#4ade80" : "#f87171" }}>
+                                {pf.mediaUrlsPublic ? "✓" : "✗"} Media URLs（public https）
+                              </p>
+                              {(pf.blockedUrls ?? []).length > 0 && (
+                                <p style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace", marginTop: 2 }}>
+                                  blocked: {pf.blockedUrls![0].slice(0, 50)}{(pf.blockedUrls!.length > 1 ? ` +${pf.blockedUrls!.length - 1} more` : "")}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {/* Error / status reason */}
+                        {(j.error_code || meta.error_message) && (
+                          <div style={{ padding: "6px 8px", background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.12)", borderRadius: 6 }}>
+                            {j.error_code && <p style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace", marginBottom: 2 }}>{j.error_code}</p>}
+                            {meta.error_message && <p style={{ color: "#9B9387", fontSize: 10 }}>{meta.error_message}</p>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </SectionCard>

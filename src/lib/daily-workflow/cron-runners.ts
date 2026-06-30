@@ -7,12 +7,15 @@ import {
   updateRunStatus,
   createTopicCandidates,
   createPublishJob,
+  updatePublishJobById,
   logJobEvent,
   deleteRunCandidates,
   forceResetRunForRegeneration,
   getRunDetails,
   getSelectedTopic,
 } from "./service";
+import { publishInstagramCarousel } from "@/lib/social/instagram-publisher";
+import type { PublishStatus } from "./types";
 import { generateDailyCarousel } from "./daily-carousel-generator";
 import type { DraftSlide } from "./topic-generator";
 import { getTaiwanRunDate, logCronTriggered } from "./cron";
@@ -546,7 +549,11 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
 }
 
 // ── daily-publish ─────────────────────────────────────────────────────────────
-// Skeleton: no Instagram. Checks 8/8 slides READY and creates publish job skeleton.
+// Instagram carousel publish preflight.
+// v1: dry-run / preflight only — never calls Instagram.
+// Safety switch: PHOENIX_AUTO_PUBLISH_ENABLED must = "true" to proceed past dry-run.
+// Blocked by: local media URLs, missing META env, safety switch.
+// No LINE, no real IG post in v1.
 
 export async function runDailyPublish(devMode: boolean): Promise<CronRunResult> {
   const runDate = getTaiwanRunDate();
@@ -566,20 +573,29 @@ export async function runDailyPublish(devMode: boolean): Promise<CronRunResult> 
       payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status },
     });
 
-    stage = "count_ready_slides";
-    const db = createServerClient();
-    let readyCount = 0;
-    if (db) {
-      const { data } = await db
-        .from("phoenix_carousel_slides")
-        .select("id")
-        .eq("run_id", run.id)
-        .eq("final_ratio_status", "passed_4_5");
-      readyCount = data?.length ?? 0;
+    // Already published — skip
+    if (run.status === "published") {
+      return {
+        ok: true,
+        job_type: "daily_publish",
+        status: "skipped_already_published",
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: "Already published today — skipped",
+        skipped: true,
+      };
     }
 
+    // Load run details: slides + existing publish jobs
+    stage = "load_run_details";
+    const { slides, publishJobs } = await getRunDetails(run.id);
+
+    stage = "count_ready_slides";
+    const readySlides = slides.filter((s) => s.final_ratio_status === "passed_4_5");
+    const readyCount = readySlides.length;
+
     if (readyCount < 8) {
-      stage = "update_status_skipped_not_ready";
       await updateRunStatus(run.id, "skipped_not_ready", {
         skipped_at: new Date().toISOString(),
         ready_slide_count: readyCount,
@@ -604,41 +620,122 @@ export async function runDailyPublish(devMode: boolean): Promise<CronRunResult> 
       };
     }
 
-    stage = "create_publish_job";
-    await createPublishJob({
-      run_id: run.id,
-      platform: "instagram",
-      status: "pending",
-      scheduled_at: new Date().toISOString(),
-      metadata: { created_by: "daily_publish_cron", note: "skeleton — IG not wired yet" },
+    // Get or create publish job — never duplicate
+    stage = "get_or_create_publish_job";
+    let publishJob = publishJobs.find((j) => j.platform === "instagram") ?? null;
+
+    if (publishJob?.status === "published") {
+      return {
+        ok: true,
+        job_type: "daily_publish",
+        status: "skipped_already_published",
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: "Instagram publish job already published — skipped",
+        skipped: true,
+      };
+    }
+
+    if (!publishJob) {
+      publishJob = await createPublishJob({
+        run_id: run.id,
+        platform: "instagram",
+        status: "pending",
+        scheduled_at: new Date().toISOString(),
+        metadata: { created_by: "daily_publish_cron" },
+      });
+    }
+
+    // Get caption from selected topic
+    stage = "load_caption";
+    const selectedTopic = await getSelectedTopic(run.id);
+    const caption = selectedTopic?.draft_caption ?? "";
+
+    // Run Instagram publish preflight
+    stage = "run_preflight";
+    const publishResult = await publishInstagramCarousel({
+      runId: run.id,
+      caption,
+      slides: readySlides.map((s) => ({
+        slideNo: s.slide_no,
+        finalVideoUrl: s.final_video_url ?? "",
+        mimeType: "video/mp4",
+      })),
     });
 
-    stage = "update_status_ready_to_publish";
-    await updateRunStatus(run.id, "ready_to_publish", {
-      ready_at: new Date().toISOString(),
-      ready_slide_count: readyCount,
+    // Update publish job with preflight result
+    stage = "update_publish_job";
+    await updatePublishJobById(publishJob.id, {
+      status: publishResult.status as PublishStatus,
+      caption: caption || undefined,
+      error_code: publishResult.errorCode,
+      error_message: publishResult.errorMessage,
+      ...(publishResult.platformMediaId
+        ? { platform_media_id: publishResult.platformMediaId, published_at: new Date().toISOString() }
+        : {}),
+      metadata: {
+        created_by: "daily_publish_cron",
+        dry_run: publishResult.dryRun,
+        preflight: publishResult.preflight,
+        error_code: publishResult.errorCode,
+        error_message: publishResult.errorMessage,
+      },
     });
+
+    // Log publish event
     await logCronTriggered({
       runId: run.id,
       jobType: "daily_publish",
-      status: "ready_to_publish",
-      message: "8/8 slides READY — publish job created (skeleton: IG not called)",
-      payload: { run_date: runDate, ready_count: readyCount },
+      status: publishResult.status,
+      message: `Instagram preflight result: ${publishResult.status} — ${publishResult.errorMessage ?? "ok"}`,
+      payload: {
+        run_date: runDate,
+        dry_run: publishResult.dryRun,
+        error_code: publishResult.errorCode,
+        auto_publish_enabled: publishResult.preflight.autoPublishEnabled,
+        has_meta_config: publishResult.preflight.hasMetaConfig,
+        media_urls_public: publishResult.preflight.mediaUrlsPublic,
+      },
     });
 
+    // Update run status
+    stage = "update_run_status";
+    if (publishResult.status === "published") {
+      await updateRunStatus(run.id, "published", { published_at: new Date().toISOString() });
+    } else {
+      await updateRunStatus(run.id, "ready_to_publish", {
+        last_publish_attempt: new Date().toISOString(),
+        last_publish_status: publishResult.status,
+      });
+    }
+
     return {
-      ok: true,
+      ok: publishResult.ok,
       job_type: "daily_publish",
-      status: "ready_to_publish",
+      status: publishResult.status,
       run_date: runDate,
       run_id: run.id,
       dev_mode: devMode,
-      message: "8/8 READY — publish job created (skeleton — Instagram not called)",
+      message: publishResult.errorMessage ?? publishResult.status,
+      dry_run: publishResult.dryRun,
+      preflight: publishResult.preflight,
       ready_count: readyCount,
+      ...(publishResult.ok === false
+        ? {
+            stage: "run_preflight",
+            errorCode: publishResult.errorCode ?? undefined,
+            errorMessage: publishResult.errorMessage ?? undefined,
+            devHint: "Check preflight.blockedUrls or set PHOENIX_AUTO_PUBLISH_ENABLED=true and META env vars.",
+          }
+        : {}),
     };
 
   } catch (err) {
     if (runId) {
+      try {
+        await updateRunStatus(runId, "failed", { error_at: new Date().toISOString(), failed_stage: stage });
+      } catch { /* don't mask the real error */ }
       try {
         await logJobEvent({
           run_id: runId,
