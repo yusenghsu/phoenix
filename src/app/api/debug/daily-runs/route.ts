@@ -10,6 +10,7 @@ import {
   logJobEvent,
   selectTopic,
   getTaiwanDateString,
+  resetGenerationStatus,
 } from "@/lib/daily-workflow/service";
 import { createServerClient } from "@/lib/supabase/server";
 import {
@@ -150,6 +151,39 @@ export async function POST(req: NextRequest) {
 
       const details = await getRunDetails(run_id);
       return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details });
+    }
+
+    if (body.action === "reset_generation" && body.run_id) {
+      if (!supabaseReady) {
+        return NextResponse.json({ error: "Supabase not available." }, { status: 503 });
+      }
+      const db = createServerClient();
+      if (!db) return NextResponse.json({ error: "DB unavailable." }, { status: 500 });
+
+      const { data: currentRun } = await db
+        .from("phoenix_daily_runs")
+        .select("status")
+        .eq("id", body.run_id)
+        .single();
+
+      if (!currentRun) return NextResponse.json({ error: "Run not found." }, { status: 404 });
+      if (!["generating", "generation_queued"].includes(currentRun.status)) {
+        return NextResponse.json({ error: `Cannot reset — current status: ${currentRun.status}` }, { status: 400 });
+      }
+
+      const run = await resetGenerationStatus(body.run_id);
+      try {
+        await logJobEvent({
+          run_id: body.run_id,
+          job_type: "daily_generate",
+          status: "generation_reset_debug",
+          message: "Stuck generation reset via debug dashboard — READY slides preserved",
+          payload: { previous_status: currentRun.status, reset_at: new Date().toISOString(), source: "debug_dashboard" },
+        });
+      } catch { /* non-critical */ }
+
+      const details = await getRunDetails(body.run_id);
+      return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details, run });
     }
 
     return NextResponse.json({ error: "Unknown action." }, { status: 400 });

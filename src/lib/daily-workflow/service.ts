@@ -130,6 +130,20 @@ export async function forceResetRunForRegeneration(runId: string): Promise<Daily
   return data as DailyRun;
 }
 
+// Resets a stuck generating run back to "selected" without deleting any slides.
+// Only valid when status is "generating" or "generation_queued".
+export async function resetGenerationStatus(runId: string): Promise<DailyRun> {
+  const db = requireClient();
+  const { data, error } = await db
+    .from("phoenix_daily_runs")
+    .update({ status: "selected", updated_at: new Date().toISOString() })
+    .eq("id", runId)
+    .select()
+    .single();
+  if (error || !data) throw new Error(`Failed to reset generation status: ${error?.message}`);
+  return data as DailyRun;
+}
+
 // ── Topic Candidates ──────────────────────────────────────────────────────────
 
 export async function createTopicCandidates(

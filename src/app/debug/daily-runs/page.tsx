@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   DailyRun,
   TopicCandidate,
@@ -10,6 +10,32 @@ import type {
 } from "@/lib/daily-workflow/types";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+const PHASE_LABEL: Record<string, string> = {
+  generation_started: "準備中",
+  slide_started: "開始處理",
+  keyframe_started: "生成 Keyframe（OpenAI）",
+  keyframe_generated: "Keyframe 完成",
+  motion_started: "等待 Runway（消耗 credits）",
+  motion_generated: "Runway 動態完成",
+  compose_started: "合成 4:5（ffmpeg）",
+  compose_completed: "合成完成",
+  slide_ready: "READY ✓",
+  generation_complete: "全部完成",
+  generation_failed: "生成失敗",
+  generation_partial: "部分完成（已中止）",
+  locked: "鎖定（另一個 job 進行中）",
+  generation_reset_debug: "已重置（Debug）",
+};
+
+function formatElapsed(startAt: string | null | undefined): string {
+  if (!startAt) return "—";
+  const ms = Date.now() - new Date(startAt).getTime();
+  if (ms < 0) return "—";
+  const min = Math.floor(ms / 60000);
+  const sec = Math.floor((ms % 60000) / 1000);
+  return `${min}m ${String(sec).padStart(2, "0")}s`;
+}
 
 function StatusBadge({ status }: { status: string }) {
   const color =
@@ -73,6 +99,7 @@ export default function DailyRunsDebugPage() {
   const [selectingTopicId, setSelectingTopicId] = useState<string | null>(null);
   const [cronPending, setCronPending] = useState<"ideas" | "generate" | "publish" | "force_ideas" | null>(null);
   const [confirmForceRegen, setConfirmForceRegen] = useState(false);
+  const [confirmResetGeneration, setConfirmResetGeneration] = useState(false);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -135,6 +162,44 @@ export default function DailyRunsDebugPage() {
   }, [fetchDetails]);
 
   useEffect(() => { fetchToday(); }, [fetchToday]);
+
+  // Stable ref so silentRefresh can read the current run.id without being in its dep array
+  const runRef = useRef<DailyRun | null>(null);
+  useEffect(() => { runRef.current = run; }, [run]);
+
+  const silentRefresh = useCallback(async () => {
+    const currentRun = runRef.current;
+    if (!currentRun) return;
+    try {
+      const [runRes, detailsRes] = await Promise.all([
+        fetch("/api/debug/daily-runs"),
+        fetch(`/api/debug/daily-runs?run_id=${currentRun.id}`),
+      ]);
+      const runData = (await runRes.json()) as { status: string; run?: DailyRun; today?: string; storage_mode?: "supabase" | "local" };
+      const detailsData = (await detailsRes.json()) as { status: string; storage_mode?: "supabase" | "local"; candidates?: TopicCandidate[]; slides?: CarouselSlide[]; publishJobs?: PublishJob[]; events?: JobEvent[] };
+      if (runData.status === "ok") {
+        if (runData.today) setToday(runData.today);
+        if (runData.storage_mode) setStorageMode(runData.storage_mode);
+        if (runData.run) setRun(runData.run);
+      }
+      if (detailsData.status === "ok") {
+        if (detailsData.storage_mode) setStorageMode(detailsData.storage_mode);
+        setDetails({
+          candidates: detailsData.candidates ?? [],
+          slides: detailsData.slides ?? [],
+          publishJobs: detailsData.publishJobs ?? [],
+          events: detailsData.events ?? [],
+        });
+      }
+    } catch { /* non-critical */ }
+  }, []); // stable — reads run via runRef
+
+  // Poll every 3 s while generation is active
+  useEffect(() => {
+    if (run?.status !== "generating" && run?.status !== "generation_queued") return;
+    const interval = setInterval(silentRefresh, 3000);
+    return () => clearInterval(interval);
+  }, [run?.status, silentRefresh]);
 
   const handleCreateRun = async () => {
     setActionPending(true);
@@ -266,6 +331,37 @@ export default function DailyRunsDebugPage() {
     }
   };
 
+  const handleResetGeneration = async () => {
+    if (!run || !confirmResetGeneration) return;
+    setActionPending(true);
+    setConfirmResetGeneration(false);
+    setError(null);
+    try {
+      const res = await fetch("/api/debug/daily-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_generation", run_id: run.id }),
+      });
+      const data = (await res.json()) as { status: string; run?: DailyRun; candidates?: TopicCandidate[]; slides?: CarouselSlide[]; publishJobs?: PublishJob[]; events?: JobEvent[]; storage_mode?: "supabase" | "local"; error?: string };
+      if (data.status === "ok") {
+        if (data.run) setRun(data.run);
+        if (data.storage_mode) setStorageMode(data.storage_mode);
+        setDetails({
+          candidates: data.candidates ?? details?.candidates ?? [],
+          slides: data.slides ?? details?.slides ?? [],
+          publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
+          events: data.events ?? details?.events ?? [],
+        });
+      } else {
+        setError(data.error ?? "Reset failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActionPending(false);
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "#0C0A08", padding: "40px 24px", fontFamily: "system-ui, sans-serif" }}>
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
@@ -367,6 +463,108 @@ export default function DailyRunsDebugPage() {
                 </div>
               </div>
             </SectionCard>
+
+            {/* Generation Progress — shown when generating */}
+            {(run.status === "generating" || run.status === "generation_queued") && (() => {
+              const genEvents = (details?.events ?? []).filter(e => e.job_type === "daily_generate");
+              const latest = genEvents[0];
+              const payload = latest?.payload as { slide_no?: number; slide_role?: string; ready_count?: number; total_count?: number; runway_task_id?: string; error_message?: string } | undefined;
+              const slideNo = payload?.slide_no;
+              const slideRole = payload?.slide_role;
+              const readyCount = details?.slides.filter(s => s.final_ratio_status === "passed_4_5").length ?? 0;
+              const totalCount = payload?.total_count ?? 8;
+              const phase = latest?.status ?? "";
+              const isWaitingRunway = phase === "motion_started";
+              const lastEventMs = latest?.created_at ? Date.now() - new Date(latest.created_at).getTime() : null;
+              const isStale = lastEventMs != null && lastEventMs > 10 * 60 * 1000;
+              return (
+                <SectionCard title="生成進度">
+                  {/* Stats row */}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                    <div>
+                      <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 3 }}>已完成</p>
+                      <p style={{ color: "#4ade80", fontSize: 18, fontWeight: 800, fontFamily: "monospace" }}>{readyCount} <span style={{ color: "#6F675E", fontSize: 12 }}>/ {totalCount}</span></p>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 3 }}>已用時</p>
+                      <p style={{ color: "#CFC7BA", fontSize: 14, fontWeight: 700, fontFamily: "monospace" }}>{formatElapsed(run.started_at)}</p>
+                    </div>
+                  </div>
+
+                  {/* Current slide */}
+                  {slideNo != null && (
+                    <div style={{ marginBottom: 10, padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+                      <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>處理中</p>
+                      <p style={{ color: "#FAFAF9", fontSize: 13, fontWeight: 700, marginBottom: 2 }}>
+                        第 <span style={{ color: "#FB923C" }}>{slideNo}</span> 張
+                        {slideRole && <span style={{ color: "#9B9387", fontSize: 11, marginLeft: 8 }}>· {slideRole}</span>}
+                      </p>
+                      {phase && (
+                        <p style={{ color: "#CFC7BA", fontSize: 11 }}>
+                          階段：<span style={{ color: isWaitingRunway ? "#FB923C" : "#CFC7BA" }}>{PHASE_LABEL[phase] ?? phase}</span>
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Runway warning */}
+                  {isWaitingRunway && (
+                    <div style={{ marginBottom: 10, padding: "7px 10px", background: "rgba(249,115,22,0.07)", border: "1px solid rgba(249,115,22,0.22)", borderRadius: 8 }}>
+                      <p style={{ color: "#FB923C", fontSize: 11, fontWeight: 600 }}>⚠ Runway 正在消耗 credits，請勿重複點擊</p>
+                    </div>
+                  )}
+
+                  {/* Latest event */}
+                  {latest && (
+                    <div style={{ marginBottom: 10 }}>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 3 }}>最新事件</p>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ color: "#6F675E", fontSize: 9, fontFamily: "monospace" }}>{latest.created_at?.slice(11, 19)}</span>
+                        <StatusBadge status={latest.status} />
+                        {latest.message && <span style={{ color: "#9B9387", fontSize: 10 }}>{latest.message}</span>}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Stale warning + reset */}
+                  {isStale && (
+                    <div style={{ marginTop: 8, padding: "10px 12px", background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.20)", borderRadius: 9 }}>
+                      <p style={{ color: "#f87171", fontSize: 11, fontWeight: 600, marginBottom: 8 }}>
+                        ⚠ 生成可能卡住（最後事件 {Math.floor((lastEventMs ?? 0) / 60000)} 分鐘前），請檢查 Runway Dashboard 或 server logs。
+                      </p>
+                      {!confirmResetGeneration ? (
+                        <button
+                          onClick={() => setConfirmResetGeneration(true)}
+                          disabled={actionPending}
+                          style={{ height: 32, paddingLeft: 14, paddingRight: 14, borderRadius: 8, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.24)", color: "#f87171", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                        >
+                          Debug Reset Stuck Generation
+                        </button>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          <p style={{ color: "#f87171", fontSize: 10 }}>⚠ 只重置狀態，不刪除已完成 slides。READY 張數保留。確認？</p>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button
+                              onClick={handleResetGeneration}
+                              disabled={actionPending}
+                              style={{ height: 32, paddingLeft: 14, paddingRight: 14, borderRadius: 8, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.32)", color: "#f87171", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                            >
+                              確認 Reset
+                            </button>
+                            <button
+                              onClick={() => setConfirmResetGeneration(false)}
+                              style={{ height: 32, paddingLeft: 14, paddingRight: 14, borderRadius: 8, background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#9B9387", fontSize: 11, cursor: "pointer" }}
+                            >
+                              取消
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </SectionCard>
+              );
+            })()}
 
             {/* Topic Candidates */}
             <SectionCard title={`主題候選（${details?.candidates.length ?? 0} / 5）`}>
@@ -526,25 +724,25 @@ export default function DailyRunsDebugPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {(
               [
-                { type: "ideas" as const, label: "測試 03:00 主題候選 Cron" },
-                { type: "generate" as const, label: "測試 17:00 生成 Cron" },
-                { type: "publish" as const, label: "測試 20:00 發布 Cron" },
+                { type: "ideas" as const, label: "測試 03:00 主題候選 Cron", locked: false },
+                { type: "generate" as const, label: "測試 17:00 生成 Cron", locked: run?.status === "generating" || run?.status === "generation_queued" },
+                { type: "publish" as const, label: "測試 20:00 發布 Cron", locked: false },
               ] as const
-            ).map(({ type, label }) => (
+            ).map(({ type, label, locked }) => (
               <button
                 key={type}
-                onClick={() => handleTestCron(type)}
-                disabled={cronPending !== null}
+                onClick={() => !locked && handleTestCron(type)}
+                disabled={cronPending !== null || locked}
                 style={{
                   height: 38, paddingLeft: 16, paddingRight: 16, borderRadius: 9,
-                  background: cronPending === type ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  color: cronPending === type ? "#9B9387" : "#CFC7BA",
-                  fontSize: 12, fontWeight: 600, cursor: cronPending !== null ? "not-allowed" : "pointer",
+                  background: cronPending === type ? "rgba(255,255,255,0.06)" : locked ? "rgba(255,255,255,0.01)" : "rgba(255,255,255,0.03)",
+                  border: `1px solid ${locked ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.10)"}`,
+                  color: cronPending === type ? "#9B9387" : locked ? "#f87171" : "#CFC7BA",
+                  fontSize: 12, fontWeight: 600, cursor: cronPending !== null || locked ? "not-allowed" : "pointer",
                   textAlign: "left",
                 }}
               >
-                {cronPending === type ? "執行中…" : label}
+                {cronPending === type ? "執行中…" : locked ? `${label}（生成中 — 鎖定）` : label}
               </button>
             ))}
 

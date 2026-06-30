@@ -354,6 +354,28 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
       payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status },
     });
 
+    stage = "check_not_already_generating";
+    if (run.status === "generating") {
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_generate",
+        status: "locked",
+        message: "Generation already in progress — duplicate call ignored",
+        payload: { run_date: runDate, dev_mode: devMode, current_status: run.status },
+      });
+      return {
+        ok: true,
+        job_type: "daily_generate",
+        status: "locked",
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: "Generation already in progress — not starting a second job",
+        locked: true,
+        skipped: true,
+      };
+    }
+
     stage = "check_topic_selected";
     if (!run.selected_topic_id) {
       await updateRunStatus(run.id, "skipped_no_selection", { skipped_at: new Date().toISOString() });

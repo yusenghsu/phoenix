@@ -156,7 +156,7 @@ export async function generateRunwayVideoFromKeyframe({
   keyframeDataUri: string; // data:image/png;base64,...
   prompt: string;
   durationSeconds: 4 | 5 | 6;
-}): Promise<{ video_url: string; generated_at: string }> {
+}): Promise<{ video_url: string; task_id: string; generated_at: string }> {
   const apiKey = process.env.RUNWAY_API_KEY;
   if (!apiKey) throw new Error("RUNWAY_API_KEY not configured. Add it to .env.local.");
 
@@ -182,5 +182,5 @@ export async function generateRunwayVideoFromKeyframe({
   console.log("[Runway task created]", { taskId, model, ratio: RUNWAY_IMG2VID_RATIO, slideId });
 
   const videoUrl = await pollTask(taskId, headers, "img2vid");
-  return { video_url: videoUrl, generated_at: new Date().toISOString() };
+  return { video_url: videoUrl, task_id: taskId, generated_at: new Date().toISOString() };
 }
