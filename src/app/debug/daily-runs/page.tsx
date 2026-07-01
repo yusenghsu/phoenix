@@ -2519,7 +2519,7 @@ export default function DailyRunsDebugPage() {
                     <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase" }}>3 · Last Cron Executions</p>
                     <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 7 }}>
                       <p style={{ color: "#6F675E", fontSize: 9, lineHeight: 1.5 }}>
-                        此區只顯示真正 cron 或 local debug cron test（status=triggered 事件）；手動發布與 retry 事件只顯示在下方「Manual / Publish Action History」，不會被當成 cron。
+                        此區只顯示真正 cron 或 local debug cron test（status=triggered 事件）；手動發布與 retry 事件只顯示在下方「Manual / Publish Action History」，不會被當成 cron。舊紀錄若尚未寫入 source / cronKey，會以 run id 與 terminal status 推斷，但不會把 manual publish / retry 當成 cron。
                       </p>
                     </div>
                     {!hasAnyExecution && (

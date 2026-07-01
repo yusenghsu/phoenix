@@ -1,6 +1,7 @@
 // Read-only cron observability. Never calls cron handlers, never publishes, never mutates state.
 // Filters cron executions by status="triggered" (ONLY written by cron runners, never by manual publish).
 // Manual publish / carousel retry events appear separately in manualPublishHistory.
+// Legacy events (pre-#088, no source/cronKey) are matched by job_type + run_id + terminal status.
 import { NextRequest, NextResponse } from "next/server";
 import { getTodayRun, getRunDetails } from "@/lib/daily-workflow/service";
 import { createServerClient } from "@/lib/supabase/server";
@@ -18,10 +19,36 @@ function nextTaipeiTime(hour: number, minute: number): string {
   return new Date(candidate.getTime() + offset).toISOString();
 }
 
+// All possible terminal / final-state statuses written by cron runners.
+// Does NOT include "triggered" (that is the start anchor, not an outcome).
+// Does NOT include publisher-internal intermediate statuses (publish_started, carousel_polling, etc.).
+// Manual publish statuses (succeeded, reset, retry_carousel_triggered) are excluded —
+// those only appear in job_type="manual_publish" events.
 const CRON_TERMINAL_STATUSES = [
-  "published", "failed", "dry_run", "dry_run_ready", "dry_run_missing_env",
-  "skipped_already_published", "skipped_not_ready", "skipped_existing_candidates",
-  "skipped_non_idle", "waiting_for_selection", "ideas_ready", "locked",
+  // daily_ideas outcomes
+  "waiting_for_selection",       // 03:00 normal end: candidates ready, awaiting selection
+  "candidates_generated",        // 03:00 success: candidates saved
+  "skipped_existing_candidates", // 03:00 skip: already had 5 candidates
+  "skipped_non_idle",            // 03:00 skip: run not in idle state
+  "fallback_demo_candidates",    // 03:00 demo mode outcome
+  "ideas_ready",                 // legacy label for ideas completion
+  // daily_generate outcomes
+  "skipped_no_selection",        // 17:00 skip: no topic selected — WAS MISSING, caused #089
+  "generation_complete",         // 17:00 success: all slides generated
+  "generation_partial",          // 17:00 partial: some slides done, run aborted
+  "ready_to_publish",            // 17:00 success (also logged as cron outcome)
+  "locked",                      // 17:00 skip: already generating
+  // daily_publish outcomes
+  "skipped_already_published",   // 20:00 skip: already published today
+  "skipped_not_ready",           // 20:00 skip: fewer than 8 READY slides
+  // shared outcomes
+  "published",                   // real publish success
+  "failed",                      // any cron failure
+  "error",                       // error alias used in some legacy events
+  "dry_run",                     // publish dry-run result
+  "dry_run_ready",               // publish dry-run: all preflight passed but flag=false
+  "dry_run_missing_env",         // publish dry-run: META env not configured
+  "blocked_local_media_url",     // publish dry-run: non-public media URLs
 ];
 
 const STRIP_KEYS = ["access_token", "token", "secret", "authorization", "key", "password", "credential"];
