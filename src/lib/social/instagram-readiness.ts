@@ -15,8 +15,6 @@ export interface ReadinessCheck {
 export interface IGAccountInfo {
   igUserId?: string;
   username?: string;
-  accountType?: string;
-  mediaCount?: number;
 }
 
 export interface MediaPreflight {
@@ -37,6 +35,11 @@ export interface InstagramReadinessResult {
   runIdUsed?: string;
   runDateUsed?: string;
   fallbackUsed?: boolean;
+}
+
+function maskId(id: string): string {
+  if (id.length <= 4) return id;
+  return "*".repeat(id.length - 4) + id.slice(-4);
 }
 
 function isPublicUrl(url: string): boolean {
@@ -193,7 +196,7 @@ export async function checkInstagramReadiness(
     });
   }
 
-  // 7. Graph API read test — GET only, reads account info, never creates media
+  // 7. Graph API read test — GET /{igUserId}?fields=id,username only (account_type removed: unsupported)
   if (hasAccessToken && hasIgUserId) {
     const igUserId = process.env.META_IG_USER_ID!;
     const accessToken = process.env.META_ACCESS_TOKEN!;
@@ -201,7 +204,7 @@ export async function checkInstagramReadiness(
     try {
       // access_token in query param is standard Meta Graph API — not stored or logged
       const params = new URLSearchParams({
-        fields: "id,username,account_type,media_count",
+        fields: "id,username",
         access_token: accessToken,
       });
       const readRes = await fetch(
@@ -210,23 +213,13 @@ export async function checkInstagramReadiness(
       );
 
       if (readRes.ok) {
-        const data = (await readRes.json()) as {
-          id?: string;
-          username?: string;
-          account_type?: string;
-          media_count?: number;
-        };
-        account = {
-          igUserId: data.id,
-          username: data.username,
-          accountType: data.account_type,
-          mediaCount: data.media_count,
-        };
+        const data = (await readRes.json()) as { id?: string; username?: string };
+        account = { igUserId: data.id, username: data.username };
         checks.push({
           key: "graph_api_read",
           label: "Graph API Read Test",
           status: "pass",
-          message: `Connected as @${data.username ?? igUserId} (${data.account_type ?? "unknown"})`,
+          message: `Connected as @${data.username ?? igUserId}`,
         });
       } else {
         const errData = (await readRes.json().catch(() => ({}))) as {
@@ -238,9 +231,9 @@ export async function checkInstagramReadiness(
         const hint =
           code === 190 ? " → Token expired or invalid — renew in Meta Developer"
           : code === 200 || code === 10 ? " → Token lacks instagram_basic or instagram_content_publish permission"
-          : code === 100 ? " → Invalid META_IG_USER_ID — verify in Instagram Settings → About → Account"
+          : code === 100 ? " → Invalid META_IG_USER_ID — verify the numeric IG User ID"
           : code === 803 ? " → IG User ID not found — account may not be a Professional account"
-          : " → Check account type (must be Business or Creator) and Facebook Page connection";
+          : " → Account must be Business or Creator and connected to a Facebook Page";
         checks.push({
           key: "graph_api_read",
           label: "Graph API Read Test",
@@ -255,6 +248,78 @@ export async function checkInstagramReadiness(
         status: "fail",
         message: `Network error: ${err instanceof Error ? err.message : String(err)}`,
       });
+    }
+
+    // 8. Page-to-IG binding — only when META_PAGE_ID is set and IG read succeeded
+    const pageId = process.env.META_PAGE_ID;
+    if (pageId && account?.igUserId) {
+      try {
+        const pageParams = new URLSearchParams({
+          fields: "id,name,instagram_business_account{id,username},connected_instagram_account{id,username}",
+          access_token: accessToken,
+        });
+        const pageRes = await fetch(
+          `https://graph.facebook.com/${apiVersion}/${pageId}?${pageParams}`,
+          { method: "GET" }
+        );
+
+        if (pageRes.ok) {
+          const pageData = (await pageRes.json()) as {
+            id?: string;
+            name?: string;
+            instagram_business_account?: { id?: string; username?: string };
+            connected_instagram_account?: { id?: string; username?: string };
+          };
+          const connectedIgId =
+            pageData.instagram_business_account?.id ??
+            pageData.connected_instagram_account?.id;
+          const connectedUsername =
+            pageData.instagram_business_account?.username ??
+            pageData.connected_instagram_account?.username;
+
+          if (connectedIgId === igUserId) {
+            checks.push({
+              key: "page_ig_binding",
+              label: "Page → IG Binding",
+              status: "pass",
+              message: `Page "${pageData.name ?? pageId}" is connected to @${connectedUsername ?? igUserId}`,
+            });
+          } else if (connectedIgId) {
+            checks.push({
+              key: "page_ig_binding",
+              label: "Page → IG Binding",
+              status: "fail",
+              message: `META_IG_USER_ID mismatch. Page is connected to IG id: ${maskId(connectedIgId)}. Replace META_IG_USER_ID (currently ${maskId(igUserId)}) with the connected Instagram business account id.`,
+            });
+          } else {
+            checks.push({
+              key: "page_ig_binding",
+              label: "Page → IG Binding",
+              status: "fail",
+              message: `Page "${pageData.name ?? pageId}" has no connected Instagram Business account. Connect your IG account to this Facebook Page in Instagram settings.`,
+            });
+          }
+        } else {
+          const errData = (await pageRes.json().catch(() => ({}))) as {
+            error?: { code?: number; message?: string; fbtrace_id?: string };
+          };
+          const err = errData.error;
+          const code = err?.code ?? pageRes.status;
+          checks.push({
+            key: "page_ig_binding",
+            label: "Page → IG Binding",
+            status: "fail",
+            message: `Page API error ${code}: ${err?.message ?? "unknown"} — verify META_PAGE_ID`,
+          });
+        }
+      } catch (err) {
+        checks.push({
+          key: "page_ig_binding",
+          label: "Page → IG Binding",
+          status: "fail",
+          message: `Network error checking page binding: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
     }
   } else {
     checks.push({

@@ -92,7 +92,7 @@ interface IGReadinessResult {
   canAttemptPublish: boolean;
   autoPublishEnabled: boolean;
   checks: IGReadinessCheck[];
-  account?: { igUserId?: string; username?: string; accountType?: string; mediaCount?: number };
+  account?: { igUserId?: string; username?: string };
   missingEnv: string[];
   mediaPreflight: { total: number; publicCount: number; localCount: number; invalidUrls: string[] };
   runIdUsed?: string;
@@ -1067,9 +1067,6 @@ export default function DailyRunsDebugPage() {
                 <div style={{ marginBottom: 10, padding: "7px 9px", background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 7 }}>
                   <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>IG Account</p>
                   <p style={{ color: "#4ade80", fontSize: 12, fontWeight: 700 }}>@{readiness.account.username ?? readiness.account.igUserId}</p>
-                  <p style={{ color: "#9B9387", fontSize: 9, marginTop: 2 }}>
-                    {readiness.account.accountType} · {readiness.account.mediaCount ?? "—"} posts
-                  </p>
                 </div>
               )}
 
@@ -1213,10 +1210,7 @@ export default function DailyRunsDebugPage() {
                   {readiness?.account && (
                     <div style={{ marginBottom: 12, padding: "8px 10px", background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.18)", borderRadius: 8 }}>
                       <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>IG 帳號驗證成功</p>
-                      <p style={{ color: "#4ade80", fontSize: 14, fontWeight: 700, marginBottom: 2 }}>@{readiness.account.username}</p>
-                      <p style={{ color: "#9B9387", fontSize: 10 }}>
-                        {readiness.account.accountType ?? "—"} · {readiness.account.mediaCount ?? "—"} posts
-                      </p>
+                      <p style={{ color: "#4ade80", fontSize: 14, fontWeight: 700 }}>@{readiness.account.username}</p>
                     </div>
                   )}
                   {readiness && !readiness.account && graphCheck?.status === "fail" && (
