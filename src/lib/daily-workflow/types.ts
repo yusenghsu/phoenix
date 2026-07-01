@@ -28,7 +28,7 @@ export type FinalRatioStatus = "unknown" | "passed_4_5";
 
 // ── Topic selection source ────────────────────────────────────────────────────
 
-export type TopicSelectionSource = "line" | "dashboard" | "fallback";
+export type TopicSelectionSource = "line" | "dashboard" | "fallback" | "auto";
 
 // ── Asset types ───────────────────────────────────────────────────────────────
 

@@ -390,15 +390,17 @@ export async function getRunDetails(runId: string): Promise<{
   slides: CarouselSlide[];
   publishJobs: PublishJob[];
   events: JobEvent[];
+  selectionSource: string | null;
 }> {
   const db = requireClient();
 
-  const [runRes, candidatesRes, slidesRes, jobsRes, eventsRes] = await Promise.all([
+  const [runRes, candidatesRes, slidesRes, jobsRes, eventsRes, selectionsRes] = await Promise.all([
     db.from("phoenix_daily_runs").select("*").eq("id", runId).single(),
     db.from("phoenix_topic_candidates").select("*").eq("run_id", runId).order("rank"),
     db.from("phoenix_carousel_slides").select("*").eq("run_id", runId).order("slide_no"),
     db.from("phoenix_publish_jobs").select("*").eq("run_id", runId).order("created_at"),
     db.from("phoenix_job_events").select("*").eq("run_id", runId).order("created_at", { ascending: false }).limit(50),
+    db.from("phoenix_topic_selections").select("source").eq("run_id", runId).order("selected_at", { ascending: false }).limit(1),
   ]);
 
   if (!runRes.data) throw new Error("Run not found");
@@ -409,6 +411,7 @@ export async function getRunDetails(runId: string): Promise<{
     slides: (slidesRes.data ?? []) as CarouselSlide[],
     publishJobs: (jobsRes.data ?? []) as PublishJob[],
     events: (eventsRes.data ?? []) as JobEvent[],
+    selectionSource: (selectionsRes.data?.[0] as { source: string } | null)?.source ?? null,
   };
 }
 

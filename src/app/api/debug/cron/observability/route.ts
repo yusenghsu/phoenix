@@ -33,7 +33,9 @@ const CRON_TERMINAL_STATUSES = [
   "fallback_demo_candidates",    // 03:00 demo mode outcome
   "ideas_ready",                 // legacy label for ideas completion
   // daily_generate outcomes
-  "skipped_no_selection",        // 17:00 skip: no topic selected — WAS MISSING, caused #089
+  "skipped_no_selection",        // 17:00 skip: no topic selected (legacy, pre-#090)
+  "skipped_no_candidates",       // 17:00 skip: no candidates existed for auto-selection
+  "auto_selected_topic",         // 17:00 info: auto-selected top candidate before generation
   "generation_complete",         // 17:00 success: all slides generated
   "generation_partial",          // 17:00 partial: some slides done, run aborted
   "ready_to_publish",            // 17:00 success (also logged as cron outcome)

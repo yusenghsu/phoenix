@@ -13,9 +13,10 @@ import {
   forceResetRunForRegeneration,
   getRunDetails,
   getSelectedTopic,
+  selectTopic,
 } from "./service";
 import { publishInstagramCarousel } from "@/lib/social/instagram-publisher";
-import type { PublishStatus } from "./types";
+import type { PublishStatus, TopicCandidate } from "./types";
 import { generateDailyCarousel } from "./daily-carousel-generator";
 import type { DraftSlide } from "./topic-generator";
 import { getTaiwanRunDate, logCronTriggered } from "./cron";
@@ -332,6 +333,62 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
   }
 }
 
+// ── Auto topic selection helper ───────────────────────────────────────────────
+// Called when 17:00 cron fires with no human selection.
+// Never overrides an existing selection. Picks rank=1 candidate.
+// Returns status: "manual" (already selected) | "auto" (just selected) | "none" (no candidates).
+async function ensureTopicSelectedForGeneration(
+  run: { id: string; selected_topic_id: string | null },
+  context: { runDate: string; devMode: boolean }
+): Promise<{ status: "manual" | "auto" | "none"; candidateId: string | null; message: string }> {
+  if (run.selected_topic_id) {
+    return { status: "manual", candidateId: run.selected_topic_id, message: "Using existing manual topic selection" };
+  }
+
+  const db = createServerClient();
+  if (!db) return { status: "none", candidateId: null, message: "DB unavailable for auto-selection" };
+
+  const { data: rows } = await db
+    .from("phoenix_topic_candidates")
+    .select("*")
+    .eq("run_id", run.id)
+    .order("rank")
+    .limit(5);
+
+  if (!rows || rows.length === 0) {
+    return { status: "none", candidateId: null, message: "No topic candidates available for auto-selection" };
+  }
+
+  const best = rows[0] as TopicCandidate;
+
+  try {
+    await selectTopic(run.id, best.id, "auto", {
+      selected_by: "auto",
+      selected_at: new Date().toISOString(),
+      selection_reason: "No manual topic selected before 17:00; auto-selected top candidate for daily automation.",
+      run_date: context.runDate,
+    });
+    await logJobEvent({
+      run_id: run.id,
+      job_type: "topic_selection",
+      status: "auto_selected",
+      message: `Auto-selected topic: #${best.rank} ${best.title}`,
+      payload: {
+        topic_candidate_id: best.id,
+        topic_title: best.title,
+        topic_rank: best.rank,
+        selected_by: "auto",
+        selection_reason: "auto_fallback",
+        run_date: context.runDate,
+        source: context.devMode ? "local_debug" : "vercel_cron",
+      },
+    });
+    return { status: "auto", candidateId: best.id, message: `Auto-selected #${best.rank}: ${best.title}` };
+  } catch (err) {
+    return { status: "none", candidateId: null, message: `Auto-selection failed: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 // ── daily-generate ────────────────────────────────────────────────────────────
 // Generates 8 motion carousel slides from selected topic.
 // Pipeline per slide: keyframe (OpenAI) → motion (Runway) → 4:5 compose (ffmpeg).
@@ -380,25 +437,37 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
     }
 
     stage = "check_topic_selected";
-    if (!run.selected_topic_id) {
+    const topicEnsure = await ensureTopicSelectedForGeneration(run, { runDate, devMode });
+
+    if (topicEnsure.status === "none") {
       await updateRunStatus(run.id, "skipped_no_selection", { skipped_at: new Date().toISOString() });
       await logCronTriggered({
         runId: run.id,
         jobType: "daily_generate",
-        status: "skipped_no_selection",
-        message: "No topic selected by 17:00 — skipping generation",
-        payload: { run_date: runDate },
+        status: "skipped_no_candidates",
+        message: topicEnsure.message,
+        payload: { run_date: runDate, dev_mode: devMode, source: devMode ? "local_debug" : "vercel_cron" },
       });
       return {
         ok: true,
         job_type: "daily_generate",
-        status: "skipped_no_selection",
+        status: "skipped_no_candidates",
         run_date: runDate,
         run_id: run.id,
         dev_mode: devMode,
-        message: "Skipped — no topic selected",
+        message: topicEnsure.message,
         skipped: true,
       };
+    }
+
+    if (topicEnsure.status === "auto") {
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_generate",
+        status: "auto_selected_topic",
+        message: topicEnsure.message,
+        payload: { run_date: runDate, dev_mode: devMode, topic_candidate_id: topicEnsure.candidateId, source: devMode ? "local_debug" : "vercel_cron" },
+      });
     }
 
     // Already fully complete — return early

@@ -330,6 +330,7 @@ interface Details {
   slides: CarouselSlide[];
   publishJobs: PublishJob[];
   events: JobEvent[];
+  selectionSource: string | null;
 }
 
 export default function DailyRunsDebugPage() {
@@ -381,6 +382,7 @@ export default function DailyRunsDebugPage() {
         slides?: CarouselSlide[];
         publishJobs?: PublishJob[];
         events?: JobEvent[];
+        selectionSource?: string | null;
       };
       if (data.status === "ok") {
         if (data.storage_mode) setStorageMode(data.storage_mode);
@@ -389,6 +391,7 @@ export default function DailyRunsDebugPage() {
           slides: data.slides ?? [],
           publishJobs: data.publishJobs ?? [],
           events: data.events ?? [],
+          selectionSource: data.selectionSource ?? null,
         });
       }
     } catch { /* non-critical */ }
@@ -410,6 +413,7 @@ export default function DailyRunsDebugPage() {
         slides?: CarouselSlide[];
         publishJobs?: PublishJob[];
         events?: JobEvent[];
+        selectionSource?: string | null;
         error?: string;
       };
       if (data.status === "ok") {
@@ -425,6 +429,7 @@ export default function DailyRunsDebugPage() {
               slides: data.slides ?? [],
               publishJobs: data.publishJobs ?? [],
               events: data.events ?? [],
+              selectionSource: data.selectionSource ?? null,
             });
           } else {
             await fetchDetails(data.run.id);
@@ -455,7 +460,7 @@ export default function DailyRunsDebugPage() {
         fetch(`/api/debug/daily-runs?run_id=${currentRun.id}`),
       ]);
       const runData = (await runRes.json()) as { status: string; run?: DailyRun; today?: string; storage_mode?: "supabase" | "local" };
-      const detailsData = (await detailsRes.json()) as { status: string; storage_mode?: "supabase" | "local"; candidates?: TopicCandidate[]; slides?: CarouselSlide[]; publishJobs?: PublishJob[]; events?: JobEvent[] };
+      const detailsData = (await detailsRes.json()) as { status: string; storage_mode?: "supabase" | "local"; candidates?: TopicCandidate[]; slides?: CarouselSlide[]; publishJobs?: PublishJob[]; events?: JobEvent[]; selectionSource?: string | null };
       if (runData.status === "ok") {
         if (runData.today) setToday(runData.today);
         if (runData.storage_mode) setStorageMode(runData.storage_mode);
@@ -468,6 +473,7 @@ export default function DailyRunsDebugPage() {
           slides: detailsData.slides ?? [],
           publishJobs: detailsData.publishJobs ?? [],
           events: detailsData.events ?? [],
+          selectionSource: detailsData.selectionSource ?? null,
         });
       }
     } catch { /* non-critical */ }
@@ -493,7 +499,7 @@ export default function DailyRunsDebugPage() {
       if (data.status === "ok" && data.run) {
         if (data.storage_mode) setStorageMode(data.storage_mode);
         setRun(data.run);
-        setDetails({ candidates: [], slides: [], publishJobs: [], events: [] });
+        setDetails({ candidates: [], slides: [], publishJobs: [], events: [], selectionSource: null });
       } else {
         setError(data.error ?? "Failed to create run");
       }
@@ -521,6 +527,7 @@ export default function DailyRunsDebugPage() {
         slides?: CarouselSlide[];
         publishJobs?: PublishJob[];
         events?: JobEvent[];
+        selectionSource?: string | null;
         storage_mode?: "supabase" | "local";
         error?: string;
       };
@@ -532,6 +539,7 @@ export default function DailyRunsDebugPage() {
           slides: data.slides ?? details?.slides ?? [],
           publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
           events: data.events ?? details?.events ?? [],
+          selectionSource: data.selectionSource ?? "dashboard",
         });
       } else {
         setError(data.error ?? "Failed to select topic");
@@ -630,6 +638,7 @@ export default function DailyRunsDebugPage() {
           slides: data.slides ?? details?.slides ?? [],
           publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
           events: data.events ?? details?.events ?? [],
+          selectionSource: details?.selectionSource ?? null,
         });
       } else {
         setError(data.error ?? "Reset failed");
@@ -670,6 +679,7 @@ export default function DailyRunsDebugPage() {
           slides: data.slides ?? details?.slides ?? [],
           publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
           events: data.events ?? details?.events ?? [],
+          selectionSource: details?.selectionSource ?? null,
         });
       } else {
         setSyncResult({
@@ -717,6 +727,7 @@ export default function DailyRunsDebugPage() {
           slides: data.slides ?? [],
           publishJobs: data.publishJobs ?? [],
           events: data.events ?? [],
+          selectionSource: null,
         });
       } else {
         setError(data.message ?? data.error ?? "No ready run found");
@@ -755,6 +766,7 @@ export default function DailyRunsDebugPage() {
           slides: data.slides ?? details?.slides ?? [],
           publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
           events: data.events ?? details?.events ?? [],
+          selectionSource: details?.selectionSource ?? null,
         });
         setManualPublishResult(null);
       } else {
@@ -832,6 +844,7 @@ export default function DailyRunsDebugPage() {
         slides: data.slides ?? details?.slides ?? [],
         publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
         events: data.events ?? details?.events ?? [],
+        selectionSource: details?.selectionSource ?? null,
       });
     } catch (err) {
       setManualPublishResult({
@@ -884,6 +897,7 @@ export default function DailyRunsDebugPage() {
         slides: data.slides ?? details?.slides ?? [],
         publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
         events: data.events ?? details?.events ?? [],
+        selectionSource: details?.selectionSource ?? null,
       });
     } catch (err) {
       setManualPublishResult({
@@ -1262,9 +1276,20 @@ export default function DailyRunsDebugPage() {
             {/* Selected Topic */}
             <SectionCard title="已選主題">
               {run.selected_topic_id ? (
-                <p style={{ color: "#4ade80", fontSize: 11 }}>✓ 已選 ID: {run.selected_topic_id.slice(0, 8)}…</p>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <p style={{ color: "#4ade80", fontSize: 11 }}>✓ 已選 ID: {run.selected_topic_id.slice(0, 8)}…</p>
+                  {details?.selectionSource === "auto" && (
+                    <span style={{ background: "rgba(96,165,250,0.12)", border: "1px solid rgba(96,165,250,0.3)", borderRadius: 6, padding: "2px 8px", color: "#60a5fa", fontSize: 10, fontWeight: 700 }}>系統自動選題</span>
+                  )}
+                  {(details?.selectionSource === "dashboard" || details?.selectionSource === "line") && (
+                    <span style={{ background: "rgba(249,115,22,0.10)", border: "1px solid rgba(249,115,22,0.28)", borderRadius: 6, padding: "2px 8px", color: "#FB923C", fontSize: 10, fontWeight: 700 }}>手動選題 ({details.selectionSource})</span>
+                  )}
+                  {details?.selectionSource === "fallback" && (
+                    <span style={{ background: "rgba(156,163,175,0.10)", border: "1px solid rgba(156,163,175,0.28)", borderRadius: 6, padding: "2px 8px", color: "#9ca3af", fontSize: 10, fontWeight: 700 }}>備用選題</span>
+                  )}
+                </div>
               ) : (
-                <p style={{ color: "#6F675E", fontSize: 11 }}>尚未選擇 — 等待 LINE 或 Dashboard 選擇</p>
+                <p style={{ color: "#6F675E", fontSize: 11 }}>尚未選擇 — 等待 LINE 或 Dashboard 選擇（17:00 前無選擇將自動選題）</p>
               )}
             </SectionCard>
 
