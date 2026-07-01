@@ -130,6 +130,67 @@ interface ManualPublishResult {
   isRetryPath?: boolean;
 }
 
+// ── Production launch checklist ───────────────────────────────────────────────
+
+interface ProductionChecklistResult {
+  autoPublishEnabled: boolean;
+  metaEnv: {
+    accessToken: boolean;
+    igUserId: boolean;
+    pageId: boolean;
+    graphApiVersion: boolean;
+    version: string | null;
+  };
+  graphApi: {
+    readTest: { status: string; message: string };
+    username: string | null;
+    pageBinding: { status: string; message: string };
+  };
+  media: {
+    runId: string | null;
+    runDate: string | null;
+    slideCount: number;
+    publicUrlCount: number;
+    isReady: boolean;
+  };
+  publishJob: {
+    hasJob: boolean;
+    status: string | null;
+    isEligible: boolean;
+    isBlocked: boolean;
+    isFailed: boolean;
+    hasPlatformMediaId: boolean;
+    publishedAt: string | null;
+  };
+  cronSchedule: {
+    ideasAt: string;
+    generateAt: string;
+    publishAt: string;
+    publishGatedByEnvFlag: boolean;
+  };
+  failureSafety: {
+    preservesItemContainerIds: boolean;
+    preservesCarouselContainerId: boolean;
+    preservesSanitizedError: boolean;
+    noInfiniteRetry: boolean;
+    noAutoRegeneration: boolean;
+    hasManualResetPath: boolean;
+    hasCarouselRetryPath: boolean;
+  };
+  deployment: {
+    isVercel: boolean;
+    vercelEnv: string | null;
+    nodeEnv: string;
+  };
+  recommendation: {
+    status: string;
+    message: string;
+    level: string;
+  };
+  runIdUsed: string | null;
+  runDateUsed: string | null;
+}
+
 // ── Storage sync result types (mirrors StorageSyncResult from storage-sync.ts) ─
 
 interface StorageSlideSyncResult {
@@ -179,6 +240,8 @@ export default function DailyRunsDebugPage() {
   const [manualPublishResult, setManualPublishResult] = useState<ManualPublishResult | null>(null);
   const [resetJobPending, setResetJobPending] = useState(false);
   const [retryCarouselPending, setRetryCarouselPending] = useState(false);
+  const [checklistPending, setChecklistPending] = useState(false);
+  const [checklistResult, setChecklistResult] = useState<ProductionChecklistResult | null>(null);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -695,6 +758,22 @@ export default function DailyRunsDebugPage() {
       });
     } finally {
       setRetryCarouselPending(false);
+    }
+  };
+
+  const handleFetchChecklist = async () => {
+    if (checklistPending) return;
+    setChecklistPending(true);
+    setChecklistResult(null);
+    try {
+      const params = run ? `?run_id=${run.id}` : "";
+      const res = await fetch(`/api/debug/instagram/production-checklist${params}`);
+      const data = (await res.json()) as ProductionChecklistResult;
+      setChecklistResult(data);
+    } catch (err) {
+      console.error("Checklist fetch failed:", err);
+    } finally {
+      setChecklistPending(false);
     }
   };
 
@@ -1769,6 +1848,240 @@ export default function DailyRunsDebugPage() {
                   ))}
                 </div>
               )}
+            </SectionCard>
+
+            {/* Production Launch Checklist */}
+            <SectionCard title="正式自動發布上線檢查">
+              {/* Trigger button */}
+              <button
+                onClick={handleFetchChecklist}
+                disabled={checklistPending}
+                style={{
+                  height: 36, paddingLeft: 16, paddingRight: 16, borderRadius: 8, marginBottom: 14,
+                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.10)",
+                  color: checklistPending ? "#6F675E" : "#CFC7BA",
+                  fontSize: 12, fontWeight: 600, cursor: checklistPending ? "not-allowed" : "pointer",
+                }}
+              >
+                {checklistPending ? "檢查中…" : "執行正式上線檢查"}
+              </button>
+
+              {checklistResult && (() => {
+                const cl = checklistResult;
+
+                const envOk = (v: boolean) => v ? "✓" : "✗";
+                const envColor = (v: boolean) => v ? "#4ade80" : "#f87171";
+                const statusColor = (s: string) =>
+                  s === "pass" ? "#4ade80" : s === "fail" ? "#f87171" : s === "warning" ? "#FB923C" : "#9B9387";
+                const statusIcon = (s: string) =>
+                  s === "pass" ? "✓" : s === "fail" ? "✗" : s === "warning" ? "!" : "—";
+
+                const recBg: Record<string, string> = {
+                  danger:  "rgba(239,68,68,0.08)",
+                  warning: "rgba(249,115,22,0.07)",
+                  success: "rgba(74,222,128,0.07)",
+                  info:    "rgba(255,255,255,0.03)",
+                };
+                const recBorder: Record<string, string> = {
+                  danger:  "rgba(239,68,68,0.22)",
+                  warning: "rgba(249,115,22,0.22)",
+                  success: "rgba(74,222,128,0.18)",
+                  info:    "rgba(255,255,255,0.08)",
+                };
+                const recColor: Record<string, string> = {
+                  danger:  "#f87171",
+                  warning: "#FB923C",
+                  success: "#4ade80",
+                  info:    "#9B9387",
+                };
+                const level = cl.recommendation.level;
+
+                const Row = ({ label, ok, detail }: { label: string; ok: boolean; detail?: string }) => (
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "3px 0" }}>
+                    <span style={{ color: envColor(ok), fontSize: 10, fontWeight: 700, flexShrink: 0, width: 10, marginTop: 1 }}>{envOk(ok)}</span>
+                    <div>
+                      <span style={{ color: "#CFC7BA", fontSize: 10, fontFamily: "monospace" }}>{label}</span>
+                      {detail && <span style={{ color: "#6F675E", fontSize: 9, marginLeft: 8 }}>{detail}</span>}
+                    </div>
+                  </div>
+                );
+
+                const CheckRow = ({ label, status, msg }: { label: string; status: string; msg: string }) => (
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "3px 0" }}>
+                    <span style={{ color: statusColor(status), fontSize: 10, fontWeight: 700, flexShrink: 0, width: 10, marginTop: 1 }}>{statusIcon(status)}</span>
+                    <div>
+                      <span style={{ color: "#CFC7BA", fontSize: 10, fontWeight: 600 }}>{label}</span>
+                      <span style={{ color: "#6F675E", fontSize: 9, marginLeft: 8 }}>{msg}</span>
+                    </div>
+                  </div>
+                );
+
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+                    {/* 1. Auto publish flag */}
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>1. Auto Publish Flag</p>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", padding: "7px 10px", background: cl.autoPublishEnabled ? "rgba(239,68,68,0.06)" : "rgba(74,222,128,0.05)", border: `1px solid ${cl.autoPublishEnabled ? "rgba(239,68,68,0.18)" : "rgba(74,222,128,0.15)"}`, borderRadius: 7 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: cl.autoPublishEnabled ? "#f87171" : "#4ade80" }}>
+                          PHOENIX_AUTO_PUBLISH_ENABLED = {cl.autoPublishEnabled ? "true" : "false"}
+                        </span>
+                        <span style={{ color: "#6F675E", fontSize: 9 }}>
+                          {cl.autoPublishEnabled ? "真發模式 — 20:00 cron 將真實發布到 IG" : "dry-run 模式 — 20:00 cron 不發布"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 2. Meta env readiness */}
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>2. Meta Env Readiness</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                        <Row label="META_ACCESS_TOKEN" ok={cl.metaEnv.accessToken} />
+                        <Row label="META_IG_USER_ID" ok={cl.metaEnv.igUserId} />
+                        <Row label="META_PAGE_ID" ok={cl.metaEnv.pageId} />
+                        <Row label="META_GRAPH_API_VERSION" ok={cl.metaEnv.graphApiVersion} detail={cl.metaEnv.version ?? undefined} />
+                      </div>
+                    </div>
+
+                    {/* 3. Graph API readiness */}
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>3. Graph API Readiness</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                        <CheckRow
+                          label="Graph API Read Test"
+                          status={cl.graphApi.readTest.status}
+                          msg={cl.graphApi.readTest.message}
+                        />
+                        {cl.graphApi.username && (
+                          <div style={{ paddingLeft: 18, marginTop: 2, marginBottom: 2 }}>
+                            <span style={{ color: "#4ade80", fontSize: 11, fontWeight: 700 }}>@{cl.graphApi.username}</span>
+                          </div>
+                        )}
+                        <CheckRow
+                          label="Page → IG Binding"
+                          status={cl.graphApi.pageBinding.status}
+                          msg={cl.graphApi.pageBinding.message}
+                        />
+                      </div>
+                    </div>
+
+                    {/* 4. Media readiness */}
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>4. Media Readiness</p>
+                      <div style={{ padding: "7px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 7 }}>
+                        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 4 }}>
+                          <span style={{ fontSize: 9, color: "#6F675E" }}>Run: <span style={{ color: "#9B9387", fontFamily: "monospace" }}>{cl.media.runDate ?? "—"}</span></span>
+                          <span style={{ fontSize: 9, color: "#6F675E" }}>READY slides: <span style={{ color: cl.media.slideCount === 8 ? "#4ade80" : "#f87171", fontWeight: 700 }}>{cl.media.slideCount}/8</span></span>
+                          <span style={{ fontSize: 9, color: "#6F675E" }}>Public URLs: <span style={{ color: cl.media.publicUrlCount === 8 ? "#4ade80" : "#f87171", fontWeight: 700 }}>{cl.media.publicUrlCount}/8</span></span>
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: cl.media.isReady ? "#4ade80" : "#f87171" }}>
+                          {cl.media.isReady ? "✓ 8/8 READY — 可上傳到 Instagram" : "✗ 尚未達到 8/8 public MP4 條件"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 5 & 6. Publish job + duplicate guard */}
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>5–6. Publish Job & Duplicate Guard</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {!cl.publishJob.hasJob ? (
+                          <CheckRow label="Publish Job" status="pass" msg="尚未建立（20:00 cron 會自動建立）" />
+                        ) : (
+                          <>
+                            <CheckRow
+                              label="Publish Job Status"
+                              status={
+                                cl.publishJob.isBlocked ? "fail"
+                                : cl.publishJob.isFailed ? "warning"
+                                : cl.publishJob.isEligible ? "pass"
+                                : "warning"
+                              }
+                              msg={cl.publishJob.status ?? "—"}
+                            />
+                            {cl.publishJob.hasPlatformMediaId && (
+                              <CheckRow label="Duplicate Guard" status="warning" msg="已有 platform_media_id — 20:00 cron 不會重複發布" />
+                            )}
+                            {!cl.publishJob.hasPlatformMediaId && cl.publishJob.isEligible && (
+                              <CheckRow label="Duplicate Guard" status="pass" msg="無 platform_media_id — eligible for publish" />
+                            )}
+                            {cl.publishJob.publishedAt && (
+                              <p style={{ fontSize: 9, color: "#6F675E", paddingLeft: 18, marginTop: 1 }}>
+                                published_at: {cl.publishJob.publishedAt.slice(0, 16)}
+                              </p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 7. Cron safety */}
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>7. Cron Schedule</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        {[
+                          { time: cl.cronSchedule.ideasAt, label: "Topic candidates（OpenAI only — 不呼叫 IG）" },
+                          { time: cl.cronSchedule.generateAt, label: "Carousel generation（OpenAI + Runway — 消耗 credits）" },
+                          { time: cl.cronSchedule.publishAt, label: `Publish（gated by PHOENIX_AUTO_PUBLISH_ENABLED — 目前: ${cl.autoPublishEnabled ? "true ⚠" : "false ✓"}）` },
+                        ].map(({ time, label }) => (
+                          <div key={time} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                            <span style={{ color: "#FB923C", fontSize: 10, fontWeight: 700, flexShrink: 0, width: 52, fontFamily: "monospace" }}>{time}</span>
+                            <span style={{ color: "#9B9387", fontSize: 10 }}>{label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 8. Failure safety */}
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>8. Failure Behavior</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                        <Row label="保存 item container IDs" ok={cl.failureSafety.preservesItemContainerIds} />
+                        <Row label="保存 carousel container ID" ok={cl.failureSafety.preservesCarouselContainerId} />
+                        <Row label="保存 sanitized error（不含 token）" ok={cl.failureSafety.preservesSanitizedError} />
+                        <Row label="無 infinite retry" ok={cl.failureSafety.noInfiniteRetry} />
+                        <Row label="不自動重新生成 media" ok={cl.failureSafety.noAutoRegeneration} />
+                        <Row label="手動 reset 路徑" ok={cl.failureSafety.hasManualResetPath} />
+                        <Row label="Carousel retry 路徑（code 9007）" ok={cl.failureSafety.hasCarouselRetryPath} />
+                      </div>
+                    </div>
+
+                    {/* 9. Deployment */}
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>9. Deployment Context</p>
+                      <div style={{ padding: "7px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 7 }}>
+                        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 4 }}>
+                          <span style={{ fontSize: 9, color: "#6F675E" }}>
+                            env: <span style={{ color: "#9B9387", fontFamily: "monospace" }}>{cl.deployment.nodeEnv}</span>
+                          </span>
+                          <span style={{ fontSize: 9, color: "#6F675E" }}>
+                            vercel: <span style={{ color: cl.deployment.isVercel ? "#FB923C" : "#9B9387", fontFamily: "monospace" }}>
+                              {cl.deployment.isVercel ? (cl.deployment.vercelEnv ?? "true") : "false (local)"}
+                            </span>
+                          </span>
+                        </div>
+                        <p style={{ fontSize: 9, color: "#6F675E", lineHeight: 1.5 }}>
+                          Vercel env must be configured separately. Local .env.local does not affect production.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 10. Final recommendation */}
+                    <div style={{ padding: "12px 14px", borderRadius: 9, background: recBg[level] ?? recBg.info, border: `1px solid ${recBorder[level] ?? recBorder.info}` }}>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 6 }}>10. Final Launch Recommendation</p>
+                      <p style={{ color: recColor[level] ?? recColor.info, fontSize: 11, fontWeight: 700, lineHeight: 1.6 }}>
+                        {cl.recommendation.message}
+                      </p>
+                    </div>
+
+                    {/* Run info footer */}
+                    {cl.runIdUsed && (
+                      <p style={{ color: "#6F675E", fontSize: 9, fontFamily: "monospace" }}>
+                        Checked run: {cl.runDateUsed ?? "?"} / {cl.runIdUsed.slice(0, 8)}…
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </SectionCard>
           </>
         )}
