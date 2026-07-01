@@ -1,4 +1,4 @@
-// Dev-only. One-time manual Instagram carousel publish.
+// Dev-only. One-time manual Instagram carousel publish + failed job reset.
 // Returns 403 in production. Never returns or logs META_ACCESS_TOKEN.
 // Safety gates enforced by publishInstagramCarousel() — real publish requires PHOENIX_AUTO_PUBLISH_ENABLED=true.
 import { NextRequest, NextResponse } from "next/server";
@@ -20,14 +20,55 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Not available in production." }, { status: 403 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { run_id?: string };
+  const body = (await req.json().catch(() => ({}))) as {
+    action?: string;
+    run_id?: string;
+  };
   const runId = body.run_id;
   if (!runId) {
     return NextResponse.json({ error: "run_id is required." }, { status: 400 });
   }
 
+  // ── Action: reset a failed publish job (no media id/permalink) ──────────────
+  if (body.action === "reset_failed_job") {
+    try {
+      const { publishJobs } = await getRunDetails(runId);
+      const job = publishJobs.find((j) => j.platform === "instagram");
+
+      if (!job) {
+        return NextResponse.json({ error: "No Instagram publish job found." }, { status: 404 });
+      }
+      if (job.platform_media_id) {
+        return NextResponse.json(
+          { error: "Cannot reset — job has platform_media_id (already published to Instagram)." },
+          { status: 409 }
+        );
+      }
+
+      await updatePublishJobById(job.id, {
+        status: "dry_run_ready",
+        error_code: null,
+        error_message: null,
+      });
+
+      await logJobEvent({
+        run_id: runId,
+        job_type: "manual_publish",
+        status: "reset",
+        message: `Publish job reset to dry_run_ready via debug dashboard (was: ${job.status})`,
+        payload: { previous_status: job.status, source: "debug_dashboard" },
+      }).catch(() => {});
+
+      const details = await getRunDetails(runId);
+      return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ ok: false, status: "error", error: msg }, { status: 500 });
+    }
+  }
+
+  // ── Action: manual publish ───────────────────────────────────────────────────
   try {
-    // Load run details
     const { run, slides, publishJobs } = await getRunDetails(runId);
 
     // Guard: 8 READY slides required
@@ -41,7 +82,7 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    // Guard: already published — never republish
+    // Guard: never republish
     const existingJob = publishJobs.find((j) => j.platform === "instagram");
     if (existingJob?.status === "published" || existingJob?.status === "manual_published") {
       return NextResponse.json({
@@ -63,7 +104,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Log manual publish triggered
     await logJobEvent({
       run_id: runId,
       job_type: "manual_publish",
@@ -76,12 +116,10 @@ export async function POST(req: NextRequest) {
       },
     }).catch(() => {});
 
-    // Load caption
     const selectedTopic = await getSelectedTopic(runId);
     const caption = selectedTopic?.draft_caption ?? "";
 
     // Run publish — safety gates live inside publishInstagramCarousel()
-    // If PHOENIX_AUTO_PUBLISH_ENABLED=false, returns dry_run_ready (no API calls made)
     const publishResult = await publishInstagramCarousel({
       runId,
       caption,
@@ -111,11 +149,11 @@ export async function POST(req: NextRequest) {
       } catch { /* non-critical */ }
     }
 
-    // Determine publish job final status
+    // Determine final publish job status
+    // Code-2 carousel failure is not permanently failed — keep as failed but note transience
     const finalJobStatus: PublishStatus =
       publishResult.status === "published" ? "manual_published" : (publishResult.status as PublishStatus);
 
-    // Update publish job
     await updatePublishJobById(publishJob.id, {
       status: finalJobStatus,
       caption: caption || undefined,
@@ -132,12 +170,13 @@ export async function POST(req: NextRequest) {
         error_message: publishResult.errorMessage,
         container_ids_count: publishResult.containerIds.length,
         carousel_container_id: publishResult.carouselContainerId,
+        carousel_container_attempts: publishResult.carouselContainerAttempts,
+        item_container_count: publishResult.itemContainerStatuses.length,
         permalink,
         ...(publishResult.stage ? { error_stage: publishResult.stage } : {}),
       },
     });
 
-    // Update run status and log outcome
     if (publishResult.status === "published") {
       await updateRunStatus(runId, "published", { published_at: new Date().toISOString() });
       await logJobEvent({
@@ -149,6 +188,7 @@ export async function POST(req: NextRequest) {
           platform_media_id: publishResult.platformMediaId,
           carousel_container_id: publishResult.carouselContainerId,
           container_count: publishResult.containerIds.length,
+          carousel_attempts: publishResult.carouselContainerAttempts,
           permalink,
         },
       }).catch(() => {});
@@ -162,11 +202,12 @@ export async function POST(req: NextRequest) {
           dry_run: publishResult.dryRun,
           error_code: publishResult.errorCode,
           stage: publishResult.stage,
+          item_container_count: publishResult.itemContainerStatuses.length,
+          carousel_attempts: publishResult.carouselContainerAttempts,
         },
       }).catch(() => {});
     }
 
-    // Return fresh details so the dashboard can update in-place
     const details = await getRunDetails(runId);
 
     return NextResponse.json({
@@ -177,6 +218,8 @@ export async function POST(req: NextRequest) {
       permalink,
       carouselContainerId: publishResult.carouselContainerId,
       containerCount: publishResult.containerIds.length,
+      carouselContainerAttempts: publishResult.carouselContainerAttempts,
+      itemContainerStatuses: publishResult.itemContainerStatuses,
       errorCode: publishResult.errorCode,
       errorMessage: publishResult.errorMessage,
       stage: publishResult.stage,

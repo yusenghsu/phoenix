@@ -103,6 +103,14 @@ interface IGReadinessResult {
 
 // ── Manual publish result ─────────────────────────────────────────────────────
 
+interface IGContainerStatus {
+  slideNo: number;
+  creationId: string;
+  statusCode: string | null;
+  status: string | null;
+  createdAt: string;
+}
+
 interface ManualPublishResult {
   ok: boolean;
   status: string;
@@ -111,6 +119,8 @@ interface ManualPublishResult {
   permalink?: string | null;
   carouselContainerId?: string | null;
   containerCount?: number;
+  carouselContainerAttempts?: number;
+  itemContainerStatuses?: IGContainerStatus[];
   errorCode?: string | null;
   errorMessage?: string | null;
   stage?: string;
@@ -164,6 +174,7 @@ export default function DailyRunsDebugPage() {
   const [readiness, setReadiness] = useState<IGReadinessResult | null>(null);
   const [manualPublishPending, setManualPublishPending] = useState(false);
   const [manualPublishResult, setManualPublishResult] = useState<ManualPublishResult | null>(null);
+  const [resetJobPending, setResetJobPending] = useState(false);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -514,6 +525,45 @@ export default function DailyRunsDebugPage() {
     }
   };
 
+  const handleResetFailedJob = async () => {
+    if (!run || resetJobPending) return;
+    setResetJobPending(true);
+    try {
+      const res = await fetch("/api/debug/instagram/publish-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_failed_job", run_id: run.id }),
+      });
+      const data = (await res.json()) as {
+        status: string;
+        run?: DailyRun;
+        candidates?: TopicCandidate[];
+        slides?: CarouselSlide[];
+        publishJobs?: PublishJob[];
+        events?: JobEvent[];
+        storage_mode?: "supabase" | "local";
+        error?: string;
+      };
+      if (data.status === "ok") {
+        if (data.run) setRun(data.run);
+        if (data.storage_mode) setStorageMode(data.storage_mode);
+        setDetails({
+          candidates: data.candidates ?? details?.candidates ?? [],
+          slides: data.slides ?? details?.slides ?? [],
+          publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
+          events: data.events ?? details?.events ?? [],
+        });
+        setManualPublishResult(null);
+      } else {
+        setError(data.error ?? "Reset failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setResetJobPending(false);
+    }
+  };
+
   const handleCheckReadiness = async () => {
     if (readinessPending) return;
     setReadinessPending(true);
@@ -562,6 +612,8 @@ export default function DailyRunsDebugPage() {
         permalink: data.permalink,
         carouselContainerId: data.carouselContainerId,
         containerCount: data.containerCount,
+        carouselContainerAttempts: data.carouselContainerAttempts,
+        itemContainerStatuses: data.itemContainerStatuses,
         errorCode: data.errorCode,
         errorMessage: data.errorMessage,
         stage: data.stage,
@@ -1203,6 +1255,7 @@ export default function DailyRunsDebugPage() {
               const igJob = details?.publishJobs.find((j) => j.platform === "instagram");
               const alreadyPublished =
                 igJob?.status === "published" || igJob?.status === "manual_published";
+              const jobIsFailed = igJob?.status === "failed" && !igJob?.platform_media_id;
               const canManualPublish =
                 readiness?.canAttemptPublish === true && !alreadyPublished && !manualPublishPending;
               const mediaCheck = readiness?.checks.find((c) => c.key === "media_urls");
@@ -1233,8 +1286,8 @@ export default function DailyRunsDebugPage() {
                 },
                 {
                   label: "Publish Job",
-                  status: alreadyPublished ? "warning" : "pass",
-                  msg: igJob ? `${igJob.status}` : "pending",
+                  status: alreadyPublished ? "warning" : jobIsFailed ? "fail" : "pass",
+                  msg: igJob ? `${igJob.status}` : "—",
                 },
               ];
 
@@ -1243,6 +1296,9 @@ export default function DailyRunsDebugPage() {
               const manualDryRun = manualPublishResult?.dryRun === true;
               const manualFailed =
                 manualPublishResult && !manualPublishResult.ok && !manualPublishResult.dryRun;
+
+              const maskId = (id: string) =>
+                id.length > 4 ? "****" + id.slice(-4) : id;
 
               return (
                 <SectionCard title="Manual Instagram Publish Test">
@@ -1302,6 +1358,27 @@ export default function DailyRunsDebugPage() {
                     </div>
                   )}
 
+                  {/* Failed job — reset button */}
+                  {jobIsFailed && (
+                    <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.16)", borderRadius: 8 }}>
+                      <p style={{ color: "#f87171", fontSize: 10, fontWeight: 600, marginBottom: 6 }}>
+                        Publish job failed（無 IG media id）— 可重置後重試
+                      </p>
+                      <button
+                        onClick={handleResetFailedJob}
+                        disabled={resetJobPending}
+                        style={{
+                          height: 32, paddingLeft: 14, paddingRight: 14, borderRadius: 7,
+                          background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.22)",
+                          color: "#f87171", fontSize: 11, fontWeight: 600,
+                          cursor: resetJobPending ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        {resetJobPending ? "重置中…" : "重置手動發布失敗狀態"}
+                      </button>
+                    </div>
+                  )}
+
                   {/* Publish button */}
                   <button
                     onClick={handleManualPublish}
@@ -1319,13 +1396,15 @@ export default function DailyRunsDebugPage() {
                     }}
                   >
                     {manualPublishPending
-                      ? "發布中…（請勿關閉此頁面）"
+                      ? "發布中…（等待 Meta API，請勿關閉）"
                       : !readiness
                       ? "手動發布到 Instagram（先完成條件檢查）"
                       : !autoEnabled
                       ? "手動發布到 Instagram（Dry-run — PHOENIX_AUTO_PUBLISH_ENABLED=false）"
                       : alreadyPublished
                       ? "手動發布到 Instagram（已發布）"
+                      : jobIsFailed
+                      ? "手動發布到 Instagram（先重置失敗狀態）"
                       : readiness.checks.some((c) => c.status === "fail")
                       ? "手動發布到 Instagram（條件未通過）"
                       : "手動發布到 Instagram（一次）"}
@@ -1357,7 +1436,11 @@ export default function DailyRunsDebugPage() {
                           )}
                           {manualPublishResult.containerCount != null && (
                             <p style={{ color: "#6F675E", fontSize: 9, marginTop: 4 }}>
-                              {manualPublishResult.containerCount} item containers · carousel: {manualPublishResult.carouselContainerId?.slice(0, 12)}…
+                              {manualPublishResult.containerCount} item containers
+                              {manualPublishResult.carouselContainerAttempts != null && manualPublishResult.carouselContainerAttempts > 1
+                                ? ` · carousel attempts: ${manualPublishResult.carouselContainerAttempts}`
+                                : ""}
+                              {manualPublishResult.carouselContainerId ? ` · carousel: ****${manualPublishResult.carouselContainerId.slice(-4)}` : ""}
                             </p>
                           )}
                         </>
@@ -1371,18 +1454,50 @@ export default function DailyRunsDebugPage() {
                         <>
                           <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 5 }}>
                             Publish failed{manualPublishResult.stage ? ` at stage: ${manualPublishResult.stage}` : ""}
+                            {manualPublishResult.carouselContainerAttempts != null && manualPublishResult.carouselContainerAttempts > 1
+                              ? ` (${manualPublishResult.carouselContainerAttempts} attempts)`
+                              : ""}
                           </p>
                           {manualPublishResult.errorCode && (
                             <p style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace", marginBottom: 3 }}>
-                              {manualPublishResult.errorCode}
+                              error code: {manualPublishResult.errorCode}
                             </p>
                           )}
                           {(manualPublishResult.errorMessage ?? manualPublishResult.error) && (
-                            <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>
+                            <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5, marginBottom: 8 }}>
                               {manualPublishResult.errorMessage ?? manualPublishResult.error}
                             </p>
                           )}
                         </>
+                      )}
+
+                      {/* Item container statuses — shown on failure or success */}
+                      {(manualPublishResult.itemContainerStatuses?.length ?? 0) > 0 && (
+                        <div style={{ marginTop: manualFailed ? 0 : 8 }}>
+                          <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>
+                            Item Containers（{manualPublishResult.itemContainerStatuses!.filter(c => c.statusCode === "FINISHED").length}/{manualPublishResult.itemContainerStatuses!.length} FINISHED）
+                          </p>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                            {manualPublishResult.itemContainerStatuses!.map((c) => {
+                              const isFinished = c.statusCode === "FINISHED";
+                              const isError = c.statusCode === "ERROR";
+                              const color = isFinished ? "#4ade80" : isError ? "#f87171" : "#9B9387";
+                              return (
+                                <div key={c.slideNo} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                  <span style={{ color: "#6F675E", fontSize: 9, fontFamily: "monospace", width: 18 }}>
+                                    {String(c.slideNo).padStart(2, "0")}
+                                  </span>
+                                  <span style={{ color, fontSize: 9, fontWeight: 700, width: 72 }}>
+                                    {c.statusCode ?? "PENDING"}
+                                  </span>
+                                  <span style={{ color: "#6F675E", fontSize: 8, fontFamily: "monospace" }}>
+                                    {maskId(c.creationId)}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}

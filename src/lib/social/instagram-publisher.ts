@@ -25,6 +25,14 @@ export interface InstagramPublishPreflight {
   blockedUrls: string[];
 }
 
+export interface InstagramContainerStatus {
+  slideNo: number;
+  creationId: string;
+  statusCode: string | null; // FINISHED | IN_PROGRESS | ERROR | PUBLISHED | null
+  status: string | null;
+  createdAt: string;
+}
+
 export interface InstagramPublishResult {
   ok: boolean;
   dryRun: boolean;
@@ -36,6 +44,8 @@ export interface InstagramPublishResult {
   errorMessage: string | null;
   stage?: string;
   preflight: InstagramPublishPreflight;
+  itemContainerStatuses: InstagramContainerStatus[];
+  carouselContainerAttempts?: number;
 }
 
 function isPublicUrl(url: string): boolean {
@@ -65,6 +75,42 @@ function sanitizeIgError(
   };
 }
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// GET /{creationId}?fields=id,status_code,status — never logs access_token
+async function checkInstagramContainerStatus(
+  creationId: string,
+  accessToken: string,
+  apiVersion: string
+): Promise<{ statusCode: string | null; status: string | null; error: string | null }> {
+  try {
+    const params = new URLSearchParams({
+      fields: "id,status_code,status",
+      access_token: accessToken,
+    });
+    const res = await fetch(
+      `https://graph.facebook.com/${apiVersion}/${creationId}?${params}`,
+      { method: "GET" }
+    );
+    if (!res.ok) {
+      const errData = (await res.json().catch(() => ({}))) as {
+        error?: { message?: string };
+      };
+      return {
+        statusCode: null,
+        status: null,
+        error: errData.error?.message ?? "container status check failed",
+      };
+    }
+    const data = (await res.json()) as { status_code?: string; status?: string };
+    return { statusCode: data.status_code ?? null, status: data.status ?? null, error: null };
+  } catch (err) {
+    return { statusCode: null, status: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function publishInstagramCarousel(
   input: InstagramPublishInput
 ): Promise<InstagramPublishResult> {
@@ -92,6 +138,7 @@ export async function publishInstagramCarousel(
     carouselContainerId: null,
     platformMediaId: null,
     preflight,
+    itemContainerStatuses: [] as InstagramContainerStatus[],
   };
 
   // ── Preflight checks (in order of actionability) ──────────────────────────
@@ -153,6 +200,7 @@ export async function publishInstagramCarousel(
 
   // Step 1: Create one video media container per slide
   const containerIds: string[] = [];
+  const itemContainerStatuses: InstagramContainerStatus[] = [];
 
   for (const slide of slides) {
     const res = await fetch(`${apiBase}/media`, {
@@ -174,65 +222,204 @@ export async function publishInstagramCarousel(
         error_code: igErr.errorCode,
         stage: igErr.stage,
       });
-      return { ...base, ok: false, dryRun: false, status: "failed", containerIds, ...igErr };
+      return {
+        ...base,
+        ok: false,
+        dryRun: false,
+        status: "failed",
+        containerIds,
+        itemContainerStatuses,
+        ...igErr,
+      };
     }
 
     const data = (await res.json()) as { id?: string };
     if (!data.id) {
       await logEvent("failed", `No container ID returned for slide ${slide.slideNo}`, { slide_no: slide.slideNo });
       return {
-        ...base, ok: false, dryRun: false, status: "failed", containerIds,
+        ...base,
+        ok: false,
+        dryRun: false,
+        status: "failed",
+        containerIds,
+        itemContainerStatuses,
         errorCode: "missing_container_id",
         errorMessage: `No container ID returned for slide ${slide.slideNo}`,
         stage: "create_item_container",
       };
     }
+
     containerIds.push(data.id);
+    itemContainerStatuses.push({
+      slideNo: slide.slideNo,
+      creationId: data.id,
+      statusCode: null,
+      status: null,
+      createdAt: new Date().toISOString(),
+    });
   }
 
-  await logEvent("carousel_items_created", `${containerIds.length} item containers created`, {
+  await logEvent("carousel_items_created", `${containerIds.length} item containers created — polling until FINISHED`, {
     container_count: containerIds.length,
   });
 
-  // Step 2: Create the carousel container
-  const carouselRes = await fetch(`${apiBase}/media`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      access_token: accessToken,
-      media_type: "CAROUSEL",
-      children: containerIds.join(","),
-      caption,
-    }),
-  });
+  // Step 2: Poll all item containers until status_code = FINISHED
+  // Max wait: 10 minutes total across all containers, 10s interval
+  const POLL_INTERVAL_MS = 10_000;
+  const POLL_MAX_MS = 10 * 60 * 1000;
+  const pollStartTime = Date.now();
+  const notReady = new Set(Array.from({ length: containerIds.length }, (_, i) => i));
 
-  if (!carouselRes.ok) {
-    const errData = (await carouselRes.json().catch(() => ({}))) as Record<string, unknown>;
-    const igErr = sanitizeIgError(errData, "create_carousel_container");
-    await logEvent("failed", `Carousel container failed: ${igErr.errorMessage}`, {
-      error_code: igErr.errorCode,
-      stage: igErr.stage,
-    });
-    return { ...base, ok: false, dryRun: false, status: "failed", containerIds, ...igErr };
+  while (notReady.size > 0) {
+    if (Date.now() - pollStartTime > POLL_MAX_MS) {
+      const unreadySlides = [...notReady].map((i) => itemContainerStatuses[i].slideNo);
+      await logEvent("container_poll_timeout", `Timeout: ${notReady.size} containers not FINISHED after 10 min`, {
+        unready_slide_nos: unreadySlides,
+        elapsed_ms: Date.now() - pollStartTime,
+      });
+      return {
+        ...base,
+        ok: false,
+        dryRun: false,
+        status: "failed",
+        containerIds,
+        itemContainerStatuses,
+        errorCode: "container_poll_timeout",
+        errorMessage: `${notReady.size} item containers (slides ${unreadySlides.join(", ")}) did not reach FINISHED status within 10 minutes`,
+        stage: "poll_item_containers",
+      };
+    }
+
+    for (const idx of [...notReady]) {
+      const creationId = containerIds[idx];
+      const pollResult = await checkInstagramContainerStatus(creationId, accessToken, version);
+      itemContainerStatuses[idx].statusCode = pollResult.statusCode;
+      itemContainerStatuses[idx].status = pollResult.status;
+
+      if (pollResult.statusCode === "FINISHED") {
+        notReady.delete(idx);
+      } else if (pollResult.statusCode === "ERROR") {
+        const slideNo = itemContainerStatuses[idx].slideNo;
+        await logEvent("failed", `Container for slide ${slideNo} errored during status check`, {
+          slide_no: slideNo,
+          creation_id: creationId,
+          status_code: pollResult.statusCode,
+          error: pollResult.error,
+        });
+        return {
+          ...base,
+          ok: false,
+          dryRun: false,
+          status: "failed",
+          containerIds,
+          itemContainerStatuses,
+          errorCode: "container_error",
+          errorMessage: `Item container for slide ${slideNo} errored: ${pollResult.error ?? "unknown"}`,
+          stage: "poll_item_containers",
+        };
+      }
+    }
+
+    if (notReady.size > 0) {
+      const elapsed = Math.round((Date.now() - pollStartTime) / 1000);
+      await logEvent("container_polling", `${containerIds.length - notReady.size}/${containerIds.length} containers FINISHED — waiting 10s (${elapsed}s elapsed)`, {
+        not_ready_count: notReady.size,
+        not_ready_slide_nos: [...notReady].map((i) => itemContainerStatuses[i].slideNo),
+        elapsed_s: elapsed,
+      });
+      await sleepMs(POLL_INTERVAL_MS);
+    }
   }
 
-  const carouselData = (await carouselRes.json()) as { id?: string };
-  const carouselContainerId = carouselData.id ?? null;
+  await logEvent("containers_ready", `All ${containerIds.length} item containers FINISHED — creating carousel container`, {
+    container_count: containerIds.length,
+    elapsed_ms: Date.now() - pollStartTime,
+  });
+
+  // Step 3: Create the carousel container
+  // Retry up to 3 extra times on code 2 (transient Meta error), with delays 10s / 20s / 40s
+  const CAROUSEL_RETRY_DELAYS_MS = [10_000, 20_000, 40_000];
+  let carouselContainerId: string | null = null;
+  let carouselContainerAttempts = 0;
+  let lastCarouselErr: { errorCode: string | null; errorMessage: string | null; stage: string } | null = null;
+  let lastCarouselErrNumericCode: number | null = null;
+
+  for (let attempt = 0; attempt <= CAROUSEL_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) {
+      const delay = CAROUSEL_RETRY_DELAYS_MS[attempt - 1];
+      await logEvent("carousel_retry", `Carousel container attempt ${attempt + 1} — waiting ${delay / 1000}s after code ${lastCarouselErrNumericCode ?? "?"}`, {
+        attempt: attempt + 1,
+        delay_ms: delay,
+        previous_error_code: lastCarouselErrNumericCode,
+      });
+      await sleepMs(delay);
+    }
+
+    carouselContainerAttempts = attempt + 1;
+
+    const carouselRes = await fetch(`${apiBase}/media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        access_token: accessToken,
+        media_type: "CAROUSEL",
+        children: containerIds.join(","),
+        caption,
+      }),
+    });
+
+    if (carouselRes.ok) {
+      const carouselData = (await carouselRes.json()) as { id?: string };
+      if (carouselData.id) {
+        carouselContainerId = carouselData.id;
+        break;
+      }
+    }
+
+    if (!carouselRes.ok || !carouselContainerId) {
+      const errData = (await carouselRes.json().catch(() => ({}))) as Record<string, unknown>;
+      lastCarouselErr = sanitizeIgError(errData, "create_carousel_container");
+      const rawCode = (errData.error as Record<string, unknown> | undefined)?.code;
+      lastCarouselErrNumericCode = rawCode != null ? Number(rawCode) : null;
+
+      // Only retry on code 2 (transient / internal Meta error)
+      if (lastCarouselErrNumericCode !== 2 || attempt >= CAROUSEL_RETRY_DELAYS_MS.length) break;
+    }
+  }
+
   if (!carouselContainerId) {
-    await logEvent("failed", "No carousel container ID returned", {});
+    const isTransient = lastCarouselErrNumericCode === 2;
+    const hint = isTransient
+      ? " — Meta code 2: transient/internal error. Child containers may still be indexing. Try pressing the manual publish button again."
+      : "";
+    await logEvent("failed", `Carousel container failed after ${carouselContainerAttempts} attempt(s): ${lastCarouselErr?.errorMessage}`, {
+      error_code: lastCarouselErr?.errorCode,
+      stage: "create_carousel_container",
+      attempts: carouselContainerAttempts,
+      item_container_count: containerIds.length,
+      is_transient: isTransient,
+    });
     return {
-      ...base, ok: false, dryRun: false, status: "failed", containerIds, carouselContainerId: null,
-      errorCode: "missing_carousel_id",
-      errorMessage: "No carousel container ID returned from Instagram API",
+      ...base,
+      ok: false,
+      dryRun: false,
+      status: "failed",
+      containerIds,
+      carouselContainerId: null,
+      itemContainerStatuses,
+      carouselContainerAttempts,
+      errorCode: lastCarouselErr?.errorCode ?? "carousel_create_failed",
+      errorMessage: `${lastCarouselErr?.errorMessage ?? "Unknown error"}${hint}`,
       stage: "create_carousel_container",
     };
   }
 
-  await logEvent("carousel_container_created", "Carousel container created", {
+  await logEvent("carousel_container_created", `Carousel container created (attempt ${carouselContainerAttempts})`, {
     carousel_container_id: carouselContainerId,
+    attempts: carouselContainerAttempts,
   });
 
-  // Step 3: Publish the carousel
+  // Step 4: Publish the carousel
   const publishRes = await fetch(`${apiBase}/media_publish`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -249,7 +436,17 @@ export async function publishInstagramCarousel(
       error_code: igErr.errorCode,
       stage: igErr.stage,
     });
-    return { ...base, ok: false, dryRun: false, status: "failed", containerIds, carouselContainerId, ...igErr };
+    return {
+      ...base,
+      ok: false,
+      dryRun: false,
+      status: "failed",
+      containerIds,
+      carouselContainerId,
+      itemContainerStatuses,
+      carouselContainerAttempts,
+      ...igErr,
+    };
   }
 
   const publishData = (await publishRes.json()) as { id?: string };
@@ -271,5 +468,7 @@ export async function publishInstagramCarousel(
     errorCode: null,
     errorMessage: null,
     preflight,
+    itemContainerStatuses,
+    carouselContainerAttempts,
   };
 }
