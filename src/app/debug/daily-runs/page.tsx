@@ -78,6 +78,26 @@ function SlideRow({ s }: { s: CarouselSlide }) {
   );
 }
 
+// ── Instagram readiness types (mirrors InstagramReadinessResult) ──────────────
+
+interface IGReadinessCheck {
+  key: string;
+  label: string;
+  status: "pass" | "fail" | "warning";
+  message: string;
+}
+
+interface IGReadinessResult {
+  ok: boolean;
+  canAttemptPublish: boolean;
+  autoPublishEnabled: boolean;
+  checks: IGReadinessCheck[];
+  account?: { igUserId?: string; username?: string; accountType?: string; mediaCount?: number };
+  missingEnv: string[];
+  mediaPreflight: { total: number; publicCount: number; localCount: number; invalidUrls: string[] };
+  error?: string;
+}
+
 // ── Storage sync result types (mirrors StorageSyncResult from storage-sync.ts) ─
 
 interface StorageSlideSyncResult {
@@ -121,6 +141,8 @@ export default function DailyRunsDebugPage() {
   const [confirmResetGeneration, setConfirmResetGeneration] = useState(false);
   const [syncPending, setSyncPending] = useState(false);
   const [syncResult, setSyncResult] = useState<StorageSyncResult | null>(null);
+  const [readinessPending, setReadinessPending] = useState(false);
+  const [readiness, setReadiness] = useState<IGReadinessResult | null>(null);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -427,6 +449,27 @@ export default function DailyRunsDebugPage() {
       });
     } finally {
       setSyncPending(false);
+    }
+  };
+
+  const handleCheckReadiness = async () => {
+    if (readinessPending) return;
+    setReadinessPending(true);
+    setReadiness(null);
+    try {
+      const params = run ? `?run_id=${run.id}` : "";
+      const res = await fetch(`/api/debug/instagram/readiness${params}`);
+      const data = (await res.json()) as IGReadinessResult;
+      setReadiness(data);
+    } catch (err) {
+      setReadiness({
+        ok: false, canAttemptPublish: false, autoPublishEnabled: false,
+        checks: [], missingEnv: [],
+        mediaPreflight: { total: 0, publicCount: 0, localCount: 0, invalidUrls: [] },
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setReadinessPending(false);
     }
   };
 
@@ -925,6 +968,86 @@ export default function DailyRunsDebugPage() {
                   })}
                 </div>
               )}
+            </SectionCard>
+
+            {/* Instagram Readiness */}
+            <SectionCard title="Instagram Readiness">
+              {/* Safety gate banner */}
+              {readiness && (
+                <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 8, background: readiness.autoPublishEnabled ? "rgba(239,68,68,0.07)" : "rgba(74,222,128,0.06)", border: `1px solid ${readiness.autoPublishEnabled ? "rgba(239,68,68,0.22)" : "rgba(74,222,128,0.18)"}` }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: readiness.autoPublishEnabled ? "#f87171" : "#4ade80" }}>
+                    {readiness.autoPublishEnabled
+                      ? "Auto publish is enabled. Pressing 20:00 publish may post to Instagram."
+                      : "Auto publish disabled. 20:00 publish remains dry-run only."}
+                  </p>
+                </div>
+              )}
+
+              {/* Checks list */}
+              {readiness && readiness.checks.length > 0 && (
+                <div style={{ marginBottom: 12, display: "flex", flexDirection: "column", gap: 5 }}>
+                  {readiness.checks.map((c) => (
+                    <div key={c.key} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, flexShrink: 0, marginTop: 1, width: 10,
+                        color: c.status === "pass" ? "#4ade80" : c.status === "fail" ? "#f87171" : "#FB923C",
+                      }}>
+                        {c.status === "pass" ? "✓" : c.status === "fail" ? "✗" : "!"}
+                      </span>
+                      <div>
+                        <p style={{ fontSize: 10, color: "#CFC7BA", fontWeight: 600 }}>{c.label}</p>
+                        <p style={{ fontSize: 9, color: "#9B9387", marginTop: 1 }}>{c.message}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Account info */}
+              {readiness?.account && (
+                <div style={{ marginBottom: 10, padding: "7px 9px", background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 7 }}>
+                  <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>IG Account</p>
+                  <p style={{ color: "#4ade80", fontSize: 12, fontWeight: 700 }}>@{readiness.account.username ?? readiness.account.igUserId}</p>
+                  <p style={{ color: "#9B9387", fontSize: 9, marginTop: 2 }}>
+                    {readiness.account.accountType} · {readiness.account.mediaCount ?? "—"} posts
+                  </p>
+                </div>
+              )}
+
+              {/* Can attempt publish summary */}
+              {readiness && (
+                <div style={{ marginBottom: 10, display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 10, color: "#6F675E" }}>Can attempt real publish:</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: readiness.canAttemptPublish ? "#4ade80" : "#f87171" }}>
+                    {readiness.canAttemptPublish ? "YES" : "NO"}
+                  </span>
+                  {readiness.missingEnv.length > 0 && (
+                    <span style={{ fontSize: 9, color: "#f87171", fontFamily: "monospace" }}>
+                      missing: {readiness.missingEnv.join(", ")}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Error */}
+              {readiness?.error && (
+                <p style={{ color: "#f87171", fontSize: 10, marginBottom: 8 }}>{readiness.error}</p>
+              )}
+
+              {/* Trigger button */}
+              <button
+                onClick={handleCheckReadiness}
+                disabled={readinessPending}
+                style={{
+                  height: 36, paddingLeft: 16, paddingRight: 16, borderRadius: 8,
+                  background: readinessPending ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  color: readinessPending ? "#6F675E" : "#CFC7BA",
+                  fontSize: 12, fontWeight: 600, cursor: readinessPending ? "not-allowed" : "pointer",
+                }}
+              >
+                {readinessPending ? "檢查中…" : "檢查 Instagram 發布條件"}
+              </button>
             </SectionCard>
 
             {/* Job Events */}
