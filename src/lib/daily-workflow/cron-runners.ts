@@ -414,6 +414,52 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
       payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status, source: devMode ? "local_debug" : "vercel_cron", triggeredBy: devMode ? "local_debug" : "vercel_cron" },
     });
 
+    // ── Fresh-run guard ─────────────────────────────────────────────────────
+    // Defensive: run must be for today's Taiwan date.
+    // getOrCreateDailyRun is date-scoped so this should never fire,
+    // but guards against midnight timezone races and stale-run scenarios.
+    stage = "fresh_run_guard";
+    if (run.run_date !== runDate) {
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_generate",
+        status: "skipped_no_fresh_run",
+        message: `No fresh same-day daily run — run date is ${run.run_date}, today is ${runDate}`,
+        payload: { run_date: runDate, run_run_date: run.run_date, dev_mode: devMode, source: devMode ? "local_debug" : "vercel_cron" },
+      });
+      return {
+        ok: true,
+        job_type: "daily_generate",
+        status: "skipped_no_fresh_run",
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: "No fresh same-day daily run available for 17:00 generation.",
+        skipped: true,
+      };
+    }
+    // Guard: don't auto-select or generate for already-published runs.
+    // Checked early to prevent selectTopic side-effects on a published run.
+    if (run.status === "published") {
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_generate",
+        status: "skipped_already_published",
+        message: `Run already ${run.status} — 17:00 generation skipped`,
+        payload: { run_date: runDate, run_status: run.status, dev_mode: devMode, source: devMode ? "local_debug" : "vercel_cron" },
+      });
+      return {
+        ok: true,
+        job_type: "daily_generate",
+        status: "skipped_already_published",
+        run_date: runDate,
+        run_id: run.id,
+        dev_mode: devMode,
+        message: `Run already ${run.status} — skipping`,
+        skipped: true,
+      };
+    }
+
     stage = "check_not_already_generating";
     if (run.status === "generating") {
       await logCronTriggered({
@@ -468,10 +514,18 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
         message: topicEnsure.message,
         payload: { run_date: runDate, dev_mode: devMode, topic_candidate_id: topicEnsure.candidateId, source: devMode ? "local_debug" : "vercel_cron" },
       });
+    } else if (topicEnsure.status === "manual") {
+      await logCronTriggered({
+        runId: run.id,
+        jobType: "daily_generate",
+        status: "using_manual_selection",
+        message: topicEnsure.message,
+        payload: { run_date: runDate, dev_mode: devMode, topic_candidate_id: topicEnsure.candidateId, source: devMode ? "local_debug" : "vercel_cron" },
+      });
     }
 
-    // Already fully complete — return early
-    if (run.status === "ready_to_publish" || run.status === "published") {
+    // Already fully complete — return early (published is caught by fresh_run_guard above)
+    if (run.status === "ready_to_publish") {
       return {
         ok: true,
         job_type: "daily_generate",

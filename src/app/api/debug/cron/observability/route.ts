@@ -35,7 +35,14 @@ const CRON_TERMINAL_STATUSES = [
   // daily_generate outcomes
   "skipped_no_selection",        // 17:00 skip: no topic selected (legacy, pre-#090)
   "skipped_no_candidates",       // 17:00 skip: no candidates existed for auto-selection
+  "skipped_no_fresh_run",        // 17:00 skip: run date mismatch (stale run guard)
+  "skipped_already_published",   // 17:00 skip: run already published (fresh-run guard)
+  "blocked_stale_run",           // 17:00 skip: stale run detected and rejected
+  "using_manual_selection",      // 17:00 info: using existing human topic selection
   "auto_selected_topic",         // 17:00 info: auto-selected top candidate before generation
+  "generation_started",          // 17:00 info: generation pipeline started
+  "generation_succeeded",        // 17:00 success alias
+  "generation_failed",           // 17:00 failure alias
   "generation_complete",         // 17:00 success: all slides generated
   "generation_partial",          // 17:00 partial: some slides done, run aborted
   "ready_to_publish",            // 17:00 success (also logged as cron outcome)

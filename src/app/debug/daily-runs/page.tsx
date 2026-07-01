@@ -304,6 +304,32 @@ interface RehearsalResult {
   };
 }
 
+// ── 17:00 generation decision simulation ─────────────────────────────────────
+
+interface GenerateSimulationResult {
+  currentTaiwanDate: string;
+  checkedAt: string;
+  todayRun: { id: string; run_date: string; status: string; selected_topic_id: string | null } | null;
+  candidateCount: number;
+  selectionSource: string | null;
+  selectedTopicStatus: "manual" | "auto_possible" | "none";
+  readySlideCount: number;
+  alreadyPublished: boolean;
+  hasPlatformMediaId: boolean;
+  staleRunDetected: boolean;
+  staleRun: { id: string; run_date: string; status: string } | null;
+  latestNonTodayRun: { id: string; run_date: string; status: string } | null;
+  simulationState:
+    | "ready_to_generate_today"
+    | "would_auto_select_then_generate"
+    | "blocked_stale_run"
+    | "blocked_already_published"
+    | "blocked_no_candidates"
+    | "no_fresh_run";
+  wouldGenerate: boolean;
+  reason: string;
+}
+
 // ── Storage sync result types (mirrors StorageSyncResult from storage-sync.ts) ─
 
 interface StorageSlideSyncResult {
@@ -361,6 +387,8 @@ export default function DailyRunsDebugPage() {
   const [rehearsalResult, setRehearsalResult] = useState<RehearsalResult | null>(null);
   const [observabilityPending, setObservabilityPending] = useState(false);
   const [observabilityResult, setObservabilityResult] = useState<CronObservabilityResult | null>(null);
+  const [simulationPending, setSimulationPending] = useState(false);
+  const [simulationResult, setSimulationResult] = useState<GenerateSimulationResult | null>(null);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -940,6 +968,21 @@ export default function DailyRunsDebugPage() {
       console.error("Observability fetch failed:", err);
     } finally {
       setObservabilityPending(false);
+    }
+  };
+
+  const handleFetchGenerateSimulation = async () => {
+    if (simulationPending) return;
+    setSimulationPending(true);
+    setSimulationResult(null);
+    try {
+      const res = await fetch("/api/debug/cron/generate-simulation");
+      const data = (await res.json()) as GenerateSimulationResult;
+      setSimulationResult(data);
+    } catch (err) {
+      console.error("Generate simulation fetch failed:", err);
+    } finally {
+      setSimulationPending(false);
     }
   };
 
@@ -2648,6 +2691,146 @@ export default function DailyRunsDebugPage() {
                       </div>
                     )}
                   </div>
+
+                </div>
+              );
+            })()}
+          </SectionCard>
+
+          {/* 17:00 Generation Decision Simulation */}
+          <SectionCard title="17:00 Generation Decision Simulation">
+            <p style={{ color: "#6F675E", fontSize: 10, lineHeight: 1.6, marginBottom: 12 }}>
+              模擬 17:00 daily_generate cron 的決策邏輯。純 read-only，不呼叫任何 provider，不建立或修改 run。
+            </p>
+            <button
+              onClick={handleFetchGenerateSimulation}
+              disabled={simulationPending}
+              style={{
+                height: 34, paddingLeft: 16, paddingRight: 16, borderRadius: 8, marginBottom: 14,
+                background: simulationPending ? "rgba(255,255,255,0.03)" : "rgba(96,165,250,0.07)",
+                border: `1px solid ${simulationPending ? "rgba(255,255,255,0.07)" : "rgba(96,165,250,0.20)"}`,
+                color: simulationPending ? "#6F675E" : "#60a5fa",
+                fontSize: 11, fontWeight: 700, cursor: simulationPending ? "not-allowed" : "pointer",
+              }}
+            >
+              {simulationPending ? "讀取中…" : "執行 17:00 決策模擬（read-only）"}
+            </button>
+
+            {simulationResult && (() => {
+              const s = simulationResult;
+
+              const stateColor: Record<string, string> = {
+                ready_to_generate_today: "#4ade80",
+                would_auto_select_then_generate: "#FB923C",
+                blocked_stale_run: "#FB923C",
+                blocked_already_published: "#9B9387",
+                blocked_no_candidates: "#FB923C",
+                no_fresh_run: "#9B9387",
+              };
+              const stateBg: Record<string, string> = {
+                ready_to_generate_today: "rgba(74,222,128,0.05)",
+                would_auto_select_then_generate: "rgba(249,115,22,0.06)",
+                blocked_stale_run: "rgba(249,115,22,0.06)",
+                blocked_already_published: "rgba(255,255,255,0.02)",
+                blocked_no_candidates: "rgba(249,115,22,0.06)",
+                no_fresh_run: "rgba(255,255,255,0.02)",
+              };
+              const stateBorder: Record<string, string> = {
+                ready_to_generate_today: "rgba(74,222,128,0.18)",
+                would_auto_select_then_generate: "rgba(249,115,22,0.22)",
+                blocked_stale_run: "rgba(249,115,22,0.22)",
+                blocked_already_published: "rgba(255,255,255,0.07)",
+                blocked_no_candidates: "rgba(249,115,22,0.22)",
+                no_fresh_run: "rgba(255,255,255,0.07)",
+              };
+
+              const rowStyle: React.CSSProperties = { display: "flex", gap: 6, alignItems: "flex-start", padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" };
+              const labelStyle: React.CSSProperties = { color: "#6F675E", fontSize: 10, width: 130, flexShrink: 0 };
+              const valStyle: React.CSSProperties = { color: "#CFC7BA", fontSize: 10, fontFamily: "monospace" };
+
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+                  {/* Result banner */}
+                  <div style={{ padding: "10px 12px", background: stateBg[s.simulationState] ?? "rgba(255,255,255,0.02)", border: `1px solid ${stateBorder[s.simulationState] ?? "rgba(255,255,255,0.07)"}`, borderRadius: 9 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ color: stateColor[s.simulationState] ?? "#CFC7BA", fontSize: 11, fontWeight: 700 }}>
+                        {s.simulationState.toUpperCase().replace(/_/g, " ")}
+                      </span>
+                      <span style={{ background: s.wouldGenerate ? "rgba(74,222,128,0.12)" : "rgba(156,163,175,0.12)", border: `1px solid ${s.wouldGenerate ? "rgba(74,222,128,0.28)" : "rgba(156,163,175,0.24)"}`, borderRadius: 6, padding: "1px 7px", color: s.wouldGenerate ? "#4ade80" : "#9ca3af", fontSize: 9, fontWeight: 700 }}>
+                        wouldGenerate: {String(s.wouldGenerate)}
+                      </span>
+                    </div>
+                    <p style={{ color: "#CFC7BA", fontSize: 11, lineHeight: 1.6 }}>{s.reason}</p>
+                  </div>
+
+                  {/* Details table */}
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>Taiwan date</span>
+                      <span style={valStyle}>{s.currentTaiwanDate}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>Today run</span>
+                      {s.todayRun ? (
+                        <span style={valStyle}>{s.todayRun.id.slice(0, 8)}… · {s.todayRun.status}</span>
+                      ) : (
+                        <span style={{ color: "#6F675E", fontSize: 10 }}>—</span>
+                      )}
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>Topic candidates</span>
+                      <span style={valStyle}>{s.candidateCount}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>Selected topic</span>
+                      <span style={valStyle}>{s.selectedTopicStatus === "manual" ? `manual (${s.selectionSource ?? "?"})` : s.selectedTopicStatus === "auto_possible" ? "none — will auto-select" : "none"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>READY slides</span>
+                      <span style={valStyle}>{s.readySlideCount} / 8</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>Already published</span>
+                      <span style={{ color: s.alreadyPublished || s.hasPlatformMediaId ? "#f87171" : "#4ade80", fontSize: 10, fontWeight: 700 }}>
+                        {s.alreadyPublished || s.hasPlatformMediaId ? "YES" : "no"}
+                        {s.hasPlatformMediaId ? " (platform_media_id)" : ""}
+                      </span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>Stale run detected</span>
+                      <span style={{ color: s.staleRunDetected ? "#FB923C" : "#4ade80", fontSize: 10, fontWeight: 700 }}>
+                        {s.staleRunDetected ? "YES" : "no"}
+                      </span>
+                    </div>
+                    {s.staleRun && (
+                      <div style={rowStyle}>
+                        <span style={labelStyle}>Stale run</span>
+                        <span style={valStyle}>{s.staleRun.run_date} · {s.staleRun.id.slice(0, 8)}… · {s.staleRun.status}</span>
+                      </div>
+                    )}
+                    {s.latestNonTodayRun && (
+                      <div style={rowStyle}>
+                        <span style={labelStyle}>Latest non-today run</span>
+                        <span style={valStyle}>{s.latestNonTodayRun.run_date} · {s.latestNonTodayRun.status}</span>
+                      </div>
+                    )}
+                    <div style={{ ...rowStyle, borderBottom: "none" }}>
+                      <span style={labelStyle}>Checked at</span>
+                      <span style={valStyle}>{s.checkedAt.slice(0, 19).replace("T", " ")} UTC</span>
+                    </div>
+                  </div>
+
+                  {/* F: Stale run warning */}
+                  {s.staleRunDetected && s.staleRun && (
+                    <div style={{ padding: "10px 12px", background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.22)", borderRadius: 9 }}>
+                      <p style={{ color: "#FB923C", fontSize: 11, fontWeight: 700, marginBottom: 3 }}>⚠ 偵測到舊的未選題 run</p>
+                      <p style={{ color: "#CFC7BA", fontSize: 10, lineHeight: 1.6 }}>
+                        {s.staleRun.run_date} 的 run（{s.staleRun.id.slice(0, 8)}…，status: {s.staleRun.status}）仍未完成。
+                        系統不會拿舊 run 做今天 17:00 生成。只有今天 Taiwan date 的 run 才會被使用。
+                      </p>
+                    </div>
+                  )}
 
                 </div>
               );
