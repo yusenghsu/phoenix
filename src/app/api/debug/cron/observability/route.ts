@@ -1,4 +1,6 @@
 // Read-only cron observability. Never calls cron handlers, never publishes, never mutates state.
+// Filters cron executions by status="triggered" (ONLY written by cron runners, never by manual publish).
+// Manual publish / carousel retry events appear separately in manualPublishHistory.
 import { NextRequest, NextResponse } from "next/server";
 import { getTodayRun, getRunDetails } from "@/lib/daily-workflow/service";
 import { createServerClient } from "@/lib/supabase/server";
@@ -6,33 +8,77 @@ import type { DailyRun, JobEvent } from "@/lib/daily-workflow/types";
 
 export const runtime = "nodejs";
 
-// Compute next occurrence of HH:MM in Asia/Taipei after "now".
 function nextTaipeiTime(hour: number, minute: number): string {
   const now = new Date();
-  // Build today's target in Taipei as a UTC instant
   const taipeiNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
   const candidate = new Date(taipeiNow);
   candidate.setHours(hour, minute, 0, 0);
   if (candidate <= taipeiNow) candidate.setDate(candidate.getDate() + 1);
-  // Reconstruct as UTC from the Taipei wall-clock
   const offset = now.getTime() - taipeiNow.getTime();
   return new Date(candidate.getTime() + offset).toISOString();
 }
 
-// Pull the most recent event(s) for a given job_type from the global events table.
-async function latestEventsByType(
+const CRON_TERMINAL_STATUSES = [
+  "published", "failed", "dry_run", "dry_run_ready", "dry_run_missing_env",
+  "skipped_already_published", "skipped_not_ready", "skipped_existing_candidates",
+  "skipped_non_idle", "waiting_for_selection", "ideas_ready", "locked",
+];
+
+const STRIP_KEYS = ["access_token", "token", "secret", "authorization", "key", "password", "credential"];
+
+const stripSecrets = (payload: Record<string, unknown>): Record<string, unknown> => {
+  const safe: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (STRIP_KEYS.some((b) => k.toLowerCase().includes(b))) continue;
+    safe[k] = v;
+  }
+  return safe;
+};
+
+const summarizeEvent = (e: JobEvent) => ({
+  triggeredAt: e.created_at,
+  jobType: e.job_type,
+  status: e.status,
+  runId: e.run_id ?? null,
+  message: e.message ?? null,
+  source: (e.payload as Record<string, unknown>)?.source ?? "unknown",
+  payload: stripSecrets(e.payload ?? {}),
+});
+
+// Get the last CRON trigger event for a given job_type.
+// status="triggered" is ONLY written by the real cron runners (logCronTriggered),
+// never by manual publish, carousel retry, or the publisher's internal logEvent.
+async function lastCronTrigger(
   db: ReturnType<typeof createServerClient>,
-  jobType: string,
-  limit = 1
-): Promise<JobEvent[]> {
-  if (!db) return [];
+  jobType: string
+): Promise<JobEvent | null> {
+  if (!db) return null;
   const { data } = await db
     .from("phoenix_job_events")
     .select("*")
     .eq("job_type", jobType)
+    .eq("status", "triggered")
     .order("created_at", { ascending: false })
-    .limit(limit);
-  return (data ?? []) as JobEvent[];
+    .limit(1);
+  return (data?.[0] as JobEvent) ?? null;
+}
+
+// Get the terminal-status outcome for a specific run (same run_id as the trigger).
+async function cronOutcomeForRun(
+  db: ReturnType<typeof createServerClient>,
+  jobType: string,
+  runId: string
+): Promise<JobEvent | null> {
+  if (!db) return null;
+  const { data } = await db
+    .from("phoenix_job_events")
+    .select("*")
+    .eq("job_type", jobType)
+    .eq("run_id", runId)
+    .in("status", CRON_TERMINAL_STATUSES)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  return (data?.[0] as JobEvent) ?? null;
 }
 
 const ARMABLE_JOB_STATUSES = ["dry_run_ready", "ready_to_publish", "pending"];
@@ -98,55 +144,60 @@ export async function GET(req: NextRequest) {
     publish: nextTaipeiTime(20, 0),
   };
 
-  // ── Last cron executions (read from job events) ───────────────────────────
   const db = createServerClient();
 
-  let lastIdeasEvent: JobEvent | null = null;
-  let lastGenerateEvent: JobEvent | null = null;
-  let lastPublishEvent: JobEvent | null = null;
+  // ── Last CRON executions — filtered to real cron triggers ─────────────────
+  // "triggered" status is ONLY written by the real cron runners at the very start.
+  // The publisher's internal logEvent writes different statuses (publish_started, published, etc.).
+  // Manual publish route writes job_type="manual_publish", never job_type="daily_publish" triggered.
+  let lastIdeasTrigger: JobEvent | null = null;
+  let lastGenerateTrigger: JobEvent | null = null;
+  let lastPublishTrigger: JobEvent | null = null;
+  let lastIdeasOutcome: JobEvent | null = null;
+  let lastGenerateOutcome: JobEvent | null = null;
+  let lastPublishOutcome: JobEvent | null = null;
 
   try {
-    const [ideasEvents, generateEvents, publishEvents] = await Promise.all([
-      latestEventsByType(db, "daily_ideas"),
-      latestEventsByType(db, "daily_generate"),
-      latestEventsByType(db, "daily_publish"),
+    [lastIdeasTrigger, lastGenerateTrigger, lastPublishTrigger] = await Promise.all([
+      lastCronTrigger(db, "daily_ideas"),
+      lastCronTrigger(db, "daily_generate"),
+      lastCronTrigger(db, "daily_publish"),
     ]);
-    lastIdeasEvent = ideasEvents[0] ?? null;
-    lastGenerateEvent = generateEvents[0] ?? null;
-    lastPublishEvent = publishEvents[0] ?? null;
+
+    // Fetch terminal-status outcome for the same run as the trigger
+    const [ideasOutcome, generateOutcome, publishOutcome] = await Promise.all([
+      lastIdeasTrigger?.run_id ? cronOutcomeForRun(db, "daily_ideas", lastIdeasTrigger.run_id) : Promise.resolve(null),
+      lastGenerateTrigger?.run_id ? cronOutcomeForRun(db, "daily_generate", lastGenerateTrigger.run_id) : Promise.resolve(null),
+      lastPublishTrigger?.run_id ? cronOutcomeForRun(db, "daily_publish", lastPublishTrigger.run_id) : Promise.resolve(null),
+    ]);
+    lastIdeasOutcome = ideasOutcome;
+    lastGenerateOutcome = generateOutcome;
+    lastPublishOutcome = publishOutcome;
   } catch { /* non-critical */ }
 
-  const stripSecrets = (payload: Record<string, unknown>): Record<string, unknown> => {
-    const safe: Record<string, unknown> = {};
-    const blocklist = ["access_token", "token", "secret", "authorization", "key", "password", "credential"];
-    for (const [k, v] of Object.entries(payload)) {
-      if (blocklist.some((b) => k.toLowerCase().includes(b))) continue;
-      safe[k] = v;
-    }
-    return safe;
-  };
-
-  const summarizeEvent = (e: JobEvent | null) => {
-    if (!e) return null;
-    return {
-      triggeredAt: e.created_at,
-      jobType: e.job_type,
-      status: e.status,
-      runId: e.run_id ?? null,
-      message: e.message ?? null,
-      payload: stripSecrets(e.payload ?? {}),
-    };
-  };
-
   const lastExecutions = {
-    ideas: summarizeEvent(lastIdeasEvent),
-    generate: summarizeEvent(lastGenerateEvent),
-    publish: summarizeEvent(lastPublishEvent),
+    ideas: lastIdeasTrigger ? { trigger: summarizeEvent(lastIdeasTrigger), outcome: lastIdeasOutcome ? summarizeEvent(lastIdeasOutcome) : null } : null,
+    generate: lastGenerateTrigger ? { trigger: summarizeEvent(lastGenerateTrigger), outcome: lastGenerateOutcome ? summarizeEvent(lastGenerateOutcome) : null } : null,
+    publish: lastPublishTrigger ? { trigger: summarizeEvent(lastPublishTrigger), outcome: lastPublishOutcome ? summarizeEvent(lastPublishOutcome) : null } : null,
   };
 
-  // ── 20:00 decision audit (read current run state) ─────────────────────────
-  const autoPublishEnabled = process.env.PHOENIX_AUTO_PUBLISH_ENABLED === "true";
+  // ── Manual / Publish Action History ───────────────────────────────────────
+  // job_type="manual_publish" is ONLY written by publish-manual/route.ts (reset, retry, manual publish).
+  let manualPublishHistory: ReturnType<typeof summarizeEvent>[] = [];
+  try {
+    if (db) {
+      const { data } = await db
+        .from("phoenix_job_events")
+        .select("*")
+        .eq("job_type", "manual_publish")
+        .order("created_at", { ascending: false })
+        .limit(10);
+      manualPublishHistory = ((data ?? []) as JobEvent[]).map(summarizeEvent);
+    }
+  } catch { /* non-critical */ }
 
+  // ── 20:00 decision audit (current run state) ──────────────────────────────
+  const autoPublishEnabled = process.env.PHOENIX_AUTO_PUBLISH_ENABLED === "true";
   let auditRunId: string | null = runIdParam ?? null;
   let auditRunDate: string | null = null;
   let auditRunStatus: string | null = null;
@@ -232,6 +283,7 @@ export async function GET(req: NextRequest) {
     runtime,
     cronSchedule,
     lastExecutions,
+    manualPublishHistory,
     publishAudit,
     nextSchedule,
   });

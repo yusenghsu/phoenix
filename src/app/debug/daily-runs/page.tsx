@@ -212,7 +212,13 @@ interface CronEventSummary {
   status: string;
   runId: string | null;
   message: string | null;
+  source: string | null;
   payload: Record<string, unknown>;
+}
+
+interface CronLastExecution {
+  trigger: CronEventSummary;
+  outcome: CronEventSummary | null;
 }
 
 interface CronObservabilityResult {
@@ -236,10 +242,11 @@ interface CronObservabilityResult {
     expectedResult: string;
   }>;
   lastExecutions: {
-    ideas: CronEventSummary | null;
-    generate: CronEventSummary | null;
-    publish: CronEventSummary | null;
+    ideas: CronLastExecution | null;
+    generate: CronLastExecution | null;
+    publish: CronLastExecution | null;
   };
+  manualPublishHistory: CronEventSummary[];
   publishAudit: {
     autoPublishEnabled: boolean;
     runId: string | null;
@@ -2387,42 +2394,62 @@ export default function DailyRunsDebugPage() {
                   hour: "2-digit", minute: "2-digit", hour12: false,
                 });
 
-              const CronEventRow = ({ label, ev }: { label: string; ev: typeof ob.lastExecutions.ideas }) => (
+              const statusColor = (s: string) =>
+                s === "triggered" ? "#9B9387"
+                : s.includes("published") || s.includes("complete") || s.includes("success") || s.includes("ready") ? passStyle.color
+                : s.includes("skip") || s.includes("dry_run") ? warnStyle.color
+                : s.includes("error") || s.includes("fail") ? failStyle.color
+                : "#9B9387";
+
+              const EventBlock = ({ e, dimLabel }: { e: CronEventSummary; dimLabel?: string }) => (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingLeft: dimLabel ? 10 : 0, borderLeft: dimLabel ? "2px solid rgba(255,255,255,0.06)" : "none" }}>
+                  {dimLabel && <p style={{ color: "#6F675E", fontSize: 8, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 2 }}>{dimLabel}</p>}
+                  <div style={rowStyle}>
+                    <span style={labelStyle}>時間</span>
+                    <span style={monoStyle}>{formatTaiwan(e.triggeredAt)}</span>
+                  </div>
+                  <div style={rowStyle}>
+                    <span style={labelStyle}>status</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: statusColor(e.status) }}>{e.status}</span>
+                  </div>
+                  {e.source && e.source !== "unknown" && (
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>source</span>
+                      <span style={{ ...monoStyle, color: e.source === "vercel_cron" ? "#4ade80" : e.source === "local_debug" ? "#60a5fa" : "#9B9387" }}>{String(e.source)}</span>
+                    </div>
+                  )}
+                  {e.runId && (
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>run id</span>
+                      <span style={monoStyle}>{e.runId.slice(0, 8)}…</span>
+                    </div>
+                  )}
+                  {e.message && (
+                    <div style={{ ...rowStyle, borderBottom: "none" }}>
+                      <span style={labelStyle}>message</span>
+                      <span style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>{e.message}</span>
+                    </div>
+                  )}
+                </div>
+              );
+
+              const CronExecCard = ({ label, exec }: { label: string; exec: CronLastExecution | null }) => (
                 <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8 }}>
                   <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 6 }}>{label}</p>
-                  {ev ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <div style={rowStyle}>
-                        <span style={labelStyle}>last triggered</span>
-                        <span style={monoStyle}>{formatTaiwan(ev.triggeredAt)}</span>
-                      </div>
-                      <div style={rowStyle}>
-                        <span style={labelStyle}>status</span>
-                        <span style={
-                          ev.status === "triggered" || ev.status === "ok" || ev.status.includes("success") || ev.status.includes("complete") || ev.status.includes("published")
-                            ? passStyle
-                            : ev.status.includes("skip") || ev.status.includes("dry_run")
-                            ? warnStyle
-                            : ev.status.includes("error") || ev.status.includes("fail")
-                            ? failStyle
-                            : { color: "#9B9387", fontSize: 10 }
-                        }>{ev.status}</span>
-                      </div>
-                      {ev.runId && (
-                        <div style={rowStyle}>
-                          <span style={labelStyle}>run id</span>
-                          <span style={monoStyle}>{ev.runId.slice(0, 8)}…</span>
-                        </div>
-                      )}
-                      {ev.message && (
-                        <div style={{ ...rowStyle, borderBottom: "none" }}>
-                          <span style={labelStyle}>message</span>
-                          <span style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>{ev.message}</span>
-                        </div>
+                  {exec ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <EventBlock e={exec.trigger} dimLabel="cron trigger" />
+                      {exec.outcome ? (
+                        <EventBlock e={exec.outcome} dimLabel="outcome" />
+                      ) : (
+                        <p style={{ color: "#6F675E", fontSize: 9, paddingLeft: 10, borderLeft: "2px solid rgba(255,255,255,0.06)" }}>outcome: 尚無 terminal status event</p>
                       )}
                     </div>
                   ) : (
-                    <p style={{ color: "#6F675E", fontSize: 10 }}>尚無紀錄。等待下一次 Vercel cron 觸發。</p>
+                    <div>
+                      <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 4 }}>no_record — 尚無此 cron 執行紀錄</p>
+                      <p style={{ color: "#6F675E", fontSize: 9, lineHeight: 1.5 }}>手動發布與 retry 事件不會出現在這裡。等待下一次 Vercel cron 觸發。</p>
+                    </div>
                   )}
                 </div>
               );
@@ -2490,6 +2517,11 @@ export default function DailyRunsDebugPage() {
                   {/* 3. Last executions */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase" }}>3 · Last Cron Executions</p>
+                    <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 7 }}>
+                      <p style={{ color: "#6F675E", fontSize: 9, lineHeight: 1.5 }}>
+                        此區只顯示真正 cron 或 local debug cron test（status=triggered 事件）；手動發布與 retry 事件只顯示在下方「Manual / Publish Action History」，不會被當成 cron。
+                      </p>
+                    </div>
                     {!hasAnyExecution && (
                       <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8 }}>
                         <p style={{ color: "#6F675E", fontSize: 10, lineHeight: 1.6 }}>
@@ -2497,9 +2529,9 @@ export default function DailyRunsDebugPage() {
                         </p>
                       </div>
                     )}
-                    <CronEventRow label="03:00 daily_ideas" ev={ob.lastExecutions.ideas} />
-                    <CronEventRow label="17:00 daily_generate" ev={ob.lastExecutions.generate} />
-                    <CronEventRow label="20:00 daily_publish" ev={ob.lastExecutions.publish} />
+                    <CronExecCard label="03:00 daily_ideas" exec={ob.lastExecutions.ideas} />
+                    <CronExecCard label="17:00 daily_generate" exec={ob.lastExecutions.generate} />
+                    <CronExecCard label="20:00 daily_publish" exec={ob.lastExecutions.publish} />
                   </div>
 
                   {/* 4. 20:00 decision audit */}
@@ -2561,6 +2593,35 @@ export default function DailyRunsDebugPage() {
                         </div>
                       );
                     })}
+                  </div>
+
+                  {/* 6. Manual / Publish Action History */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase" }}>6 · Manual / Publish Action History</p>
+                    <p style={{ color: "#6F675E", fontSize: 9, lineHeight: 1.5 }}>
+                      手動發布、carousel retry、job reset 事件（job_type=manual_publish）。不計入 cron 紀錄。
+                    </p>
+                    {ob.manualPublishHistory.length === 0 ? (
+                      <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8 }}>
+                        <p style={{ color: "#6F675E", fontSize: 10 }}>尚無手動發布紀錄。</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {ob.manualPublishHistory.map((e, i) => (
+                          <div key={i} style={{ padding: "8px 10px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 7 }}>
+                            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 3 }}>
+                              <span style={{ color: "#6F675E", fontSize: 9, fontFamily: "monospace" }}>{formatTaiwan(e.triggeredAt)}</span>
+                              <span style={{ fontSize: 9, fontWeight: 700, color: statusColor(e.status) }}>{e.status}</span>
+                              {e.source && e.source !== "unknown" && (
+                                <span style={{ color: "#6F675E", fontSize: 9 }}>{String(e.source)}</span>
+                              )}
+                              {e.runId && <span style={{ color: "#6F675E", fontSize: 9, fontFamily: "monospace" }}>run:{e.runId.slice(0, 8)}…</span>}
+                            </div>
+                            {e.message && <p style={{ color: "#9B9387", fontSize: 9, lineHeight: 1.5 }}>{e.message}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                 </div>

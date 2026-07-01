@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
         payload: { run_date: run.run_date, source: "debug_dashboard", carousel_container_id: carouselContainerId },
       }).catch(() => {});
 
-      const retryResult = await retryExistingCarouselPublish({ runId, carouselContainerId });
+      const retryResult = await retryExistingCarouselPublish({ runId, carouselContainerId, source: "carousel_retry" });
 
       let permalink: string | null = null;
       if (retryResult.status === "published" && retryResult.platformMediaId) {
@@ -259,6 +259,7 @@ export async function POST(req: NextRequest) {
         finalVideoUrl: s.final_video_url ?? "",
         mimeType: "video/mp4",
       })),
+      source: "manual_publish",
     });
 
     // Fetch permalink after a real successful publish — never logs token

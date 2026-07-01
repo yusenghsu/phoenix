@@ -16,6 +16,7 @@ export interface InstagramPublishInput {
   caption: string;
   slides: InstagramSlideInput[];
   dryRun?: boolean;
+  source?: string;
 }
 
 export interface InstagramPublishPreflight {
@@ -207,7 +208,7 @@ export async function publishInstagramCarousel(
 
   const logEvent = async (status: string, message: string, payload?: Record<string, unknown>) => {
     try {
-      await logJobEvent({ run_id: input.runId, job_type: "daily_publish", status, message, payload });
+      await logJobEvent({ run_id: input.runId, job_type: "daily_publish", status, message, payload: { ...payload, source: input.source ?? "unknown" } });
     } catch { /* non-critical — never halt publish for a log failure */ }
   };
 
@@ -588,6 +589,7 @@ export async function publishInstagramCarousel(
 export async function retryExistingCarouselPublish(input: {
   runId: string;
   carouselContainerId: string;
+  source?: string;
 }): Promise<RetryCarouselResult> {
   const autoPublishEnabled = process.env.PHOENIX_AUTO_PUBLISH_ENABLED === "true";
   const hasMetaConfig = Boolean(process.env.META_ACCESS_TOKEN && process.env.META_IG_USER_ID);
@@ -625,7 +627,7 @@ export async function retryExistingCarouselPublish(input: {
 
   const logEvent = async (status: string, message: string, payload?: Record<string, unknown>) => {
     try {
-      await logJobEvent({ run_id: input.runId, job_type: "daily_publish", status, message, payload });
+      await logJobEvent({ run_id: input.runId, job_type: "daily_publish", status, message, payload: { ...payload, source: input.source ?? "unknown" } });
     } catch { /* non-critical */ }
   };
 

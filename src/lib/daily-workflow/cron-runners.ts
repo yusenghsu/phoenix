@@ -96,7 +96,7 @@ export async function runDailyIdeas(devMode: boolean, force = false): Promise<Cr
       jobType: "daily_ideas",
       status: "triggered",
       message: force ? "daily ideas cron triggered (force regenerate)" : "03:00 daily ideas cron triggered",
-      payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status, force },
+      payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status, force, source: devMode ? "local_debug" : "vercel_cron", triggeredBy: devMode ? "local_debug" : "vercel_cron" },
     });
 
     // Count existing candidates — this drives all decisions below
@@ -354,7 +354,7 @@ export async function runDailyGenerate(devMode: boolean): Promise<CronRunResult>
       jobType: "daily_generate",
       status: "triggered",
       message: "17:00 daily generate cron triggered",
-      payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status },
+      payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status, source: devMode ? "local_debug" : "vercel_cron", triggeredBy: devMode ? "local_debug" : "vercel_cron" },
     });
 
     stage = "check_not_already_generating";
@@ -570,7 +570,7 @@ export async function runDailyPublish(devMode: boolean): Promise<CronRunResult> 
       jobType: "daily_publish",
       status: "triggered",
       message: "20:00 daily publish cron triggered",
-      payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status },
+      payload: { run_date: runDate, dev_mode: devMode, previous_status: run.status, source: devMode ? "local_debug" : "vercel_cron", triggeredBy: devMode ? "local_debug" : "vercel_cron" },
     });
 
     // Already published — skip
@@ -662,6 +662,7 @@ export async function runDailyPublish(devMode: boolean): Promise<CronRunResult> 
         finalVideoUrl: s.final_video_url ?? "",
         mimeType: "video/mp4",
       })),
+      source: devMode ? "local_debug" : "vercel_cron",
     });
 
     // Update publish job with preflight result
