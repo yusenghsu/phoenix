@@ -39,6 +39,7 @@ export interface InstagramPublishResult {
   status: string;
   containerIds: string[];
   carouselContainerId: string | null;
+  carouselStatusCode?: string | null;
   platformMediaId: string | null;
   errorCode: string | null;
   errorMessage: string | null;
@@ -46,6 +47,20 @@ export interface InstagramPublishResult {
   preflight: InstagramPublishPreflight;
   itemContainerStatuses: InstagramContainerStatus[];
   carouselContainerAttempts?: number;
+  mediaPublishAttempts?: number;
+}
+
+export interface RetryCarouselResult {
+  ok: boolean;
+  dryRun: boolean;
+  status: string;
+  carouselContainerId: string;
+  carouselStatusCode: string | null;
+  platformMediaId: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  stage?: string;
+  mediaPublishAttempts?: number;
 }
 
 function isPublicUrl(url: string): boolean {
@@ -419,22 +434,113 @@ export async function publishInstagramCarousel(
     attempts: carouselContainerAttempts,
   });
 
-  // Step 4: Publish the carousel
-  const publishRes = await fetch(`${apiBase}/media_publish`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      access_token: accessToken,
-      creation_id: carouselContainerId,
-    }),
-  });
+  // Step 3.5: Poll carousel container until FINISHED before media_publish
+  let carouselStatusCode: string | null = null;
+  {
+    const carouselPollStart = Date.now();
+    while (true) {
+      if (Date.now() - carouselPollStart > POLL_MAX_MS) {
+        await logEvent("failed", "Carousel container not FINISHED after 10 min polling", {
+          carousel_container_id: carouselContainerId,
+          elapsed_ms: Date.now() - carouselPollStart,
+        });
+        return {
+          ...base,
+          ok: false,
+          dryRun: false,
+          status: "failed",
+          containerIds,
+          carouselContainerId,
+          carouselStatusCode,
+          itemContainerStatuses,
+          carouselContainerAttempts,
+          errorCode: "carousel_poll_timeout",
+          errorMessage: "Carousel container did not reach FINISHED status within 10 minutes",
+          stage: "poll_carousel_container",
+        };
+      }
+      const poll = await checkInstagramContainerStatus(carouselContainerId!, accessToken, version);
+      carouselStatusCode = poll.statusCode;
+      if (carouselStatusCode === "FINISHED") break;
+      if (carouselStatusCode === "ERROR") {
+        await logEvent("failed", `Carousel container errored: ${poll.error}`, {
+          carousel_container_id: carouselContainerId,
+          status_code: carouselStatusCode,
+        });
+        return {
+          ...base,
+          ok: false,
+          dryRun: false,
+          status: "failed",
+          containerIds,
+          carouselContainerId,
+          carouselStatusCode,
+          itemContainerStatuses,
+          carouselContainerAttempts,
+          errorCode: "carousel_container_error",
+          errorMessage: `Carousel container errored: ${poll.error ?? "unknown"}`,
+          stage: "poll_carousel_container",
+        };
+      }
+      const elapsed = Math.round((Date.now() - carouselPollStart) / 1000);
+      await logEvent("carousel_polling", `Carousel container status: ${carouselStatusCode ?? "unknown"} — waiting 10s (${elapsed}s elapsed)`, {
+        carousel_container_id: carouselContainerId,
+        status_code: carouselStatusCode,
+        elapsed_s: elapsed,
+      });
+      await sleepMs(POLL_INTERVAL_MS);
+    }
+    await logEvent("carousel_ready", "Carousel container FINISHED — calling media_publish", {
+      carousel_container_id: carouselContainerId,
+      elapsed_ms: Date.now() - carouselPollStart,
+    });
+  }
 
-  if (!publishRes.ok) {
-    const errData = (await publishRes.json().catch(() => ({}))) as Record<string, unknown>;
-    const igErr = sanitizeIgError(errData, "media_publish");
-    await logEvent("failed", `Publish failed: ${igErr.errorMessage}`, {
-      error_code: igErr.errorCode,
-      stage: igErr.stage,
+  // Step 4: Publish — retry up to 3 times on code 9007 (carousel not yet indexed)
+  const MEDIA_PUBLISH_RETRY_DELAYS_MS = [20_000, 40_000, 80_000];
+  let platformMediaId: string | null = null;
+  let mediaPublishAttempts = 0;
+  let lastPublishErr: { errorCode: string | null; errorMessage: string | null; stage: string } | null = null;
+  let lastPublishErrNumericCode: number | null = null;
+
+  for (let attempt = 0; attempt <= MEDIA_PUBLISH_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) {
+      const delay = MEDIA_PUBLISH_RETRY_DELAYS_MS[attempt - 1];
+      await logEvent("media_publish_retry", `media_publish attempt ${attempt + 1} — waiting ${delay / 1000}s after code 9007`, {
+        attempt: attempt + 1,
+        delay_ms: delay,
+        carousel_container_id: carouselContainerId,
+      });
+      await sleepMs(delay);
+    }
+    mediaPublishAttempts = attempt + 1;
+
+    const publishRaw = (await fetch(`${apiBase}/media_publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: accessToken, creation_id: carouselContainerId }),
+    }).then((r) => r.json()).catch(() => ({}))) as Record<string, unknown> & { id?: string };
+
+    if (publishRaw.id) {
+      platformMediaId = publishRaw.id;
+      break;
+    }
+
+    lastPublishErr = sanitizeIgError(publishRaw, "media_publish");
+    const rawCode = (publishRaw.error as Record<string, unknown> | undefined)?.code;
+    lastPublishErrNumericCode = rawCode != null ? Number(rawCode) : null;
+    if (lastPublishErrNumericCode !== 9007 || attempt >= MEDIA_PUBLISH_RETRY_DELAYS_MS.length) break;
+  }
+
+  if (!platformMediaId) {
+    const hint = lastPublishErrNumericCode === 9007
+      ? " — Code 9007: carousel not yet indexed. Use '重試發布現有 carousel container' to retry without recreating containers."
+      : "";
+    await logEvent("failed", `Publish failed after ${mediaPublishAttempts} attempt(s): ${lastPublishErr?.errorMessage}`, {
+      error_code: lastPublishErr?.errorCode,
+      stage: "media_publish",
+      attempts: mediaPublishAttempts,
+      carousel_container_id: carouselContainerId,
     });
     return {
       ...base,
@@ -443,19 +549,21 @@ export async function publishInstagramCarousel(
       status: "failed",
       containerIds,
       carouselContainerId,
+      carouselStatusCode,
       itemContainerStatuses,
       carouselContainerAttempts,
-      ...igErr,
+      mediaPublishAttempts,
+      errorCode: lastPublishErr?.errorCode ?? "media_publish_failed",
+      errorMessage: `${lastPublishErr?.errorMessage ?? "Unknown error"}${hint}`,
+      stage: "media_publish",
     };
   }
-
-  const publishData = (await publishRes.json()) as { id?: string };
-  const platformMediaId = publishData.id ?? null;
 
   await logEvent("published", "Instagram carousel published successfully", {
     platform_media_id: platformMediaId,
     carousel_container_id: carouselContainerId,
     container_count: containerIds.length,
+    media_publish_attempts: mediaPublishAttempts,
   });
 
   return {
@@ -464,11 +572,195 @@ export async function publishInstagramCarousel(
     status: "published",
     containerIds,
     carouselContainerId,
+    carouselStatusCode,
     platformMediaId,
     errorCode: null,
     errorMessage: null,
     preflight,
     itemContainerStatuses,
     carouselContainerAttempts,
+    mediaPublishAttempts,
+  };
+}
+
+// Retry media_publish using an existing carousel container ID (no item container recreation).
+// Use this when a publish job has failed at media_publish with code 9007.
+export async function retryExistingCarouselPublish(input: {
+  runId: string;
+  carouselContainerId: string;
+}): Promise<RetryCarouselResult> {
+  const autoPublishEnabled = process.env.PHOENIX_AUTO_PUBLISH_ENABLED === "true";
+  const hasMetaConfig = Boolean(process.env.META_ACCESS_TOKEN && process.env.META_IG_USER_ID);
+
+  if (!autoPublishEnabled) {
+    return {
+      ok: true,
+      dryRun: true,
+      status: "dry_run_ready",
+      carouselContainerId: input.carouselContainerId,
+      carouselStatusCode: null,
+      platformMediaId: null,
+      errorCode: "auto_publish_disabled",
+      errorMessage: "Auto publish disabled — set PHOENIX_AUTO_PUBLISH_ENABLED=true to retry.",
+    };
+  }
+
+  if (!hasMetaConfig) {
+    return {
+      ok: true,
+      dryRun: true,
+      status: "dry_run_missing_env",
+      carouselContainerId: input.carouselContainerId,
+      carouselStatusCode: null,
+      platformMediaId: null,
+      errorCode: "missing_env",
+      errorMessage: "META_ACCESS_TOKEN or META_IG_USER_ID not configured.",
+    };
+  }
+
+  const igUserId = process.env.META_IG_USER_ID!;
+  const accessToken = process.env.META_ACCESS_TOKEN!;
+  const version = process.env.META_GRAPH_API_VERSION ?? "v23.0";
+  const apiBase = `https://graph.facebook.com/${version}/${igUserId}`;
+
+  const logEvent = async (status: string, message: string, payload?: Record<string, unknown>) => {
+    try {
+      await logJobEvent({ run_id: input.runId, job_type: "daily_publish", status, message, payload });
+    } catch { /* non-critical */ }
+  };
+
+  await logEvent("retry_carousel_started", "Retrying media_publish with existing carousel container", {
+    carousel_container_id: input.carouselContainerId,
+  });
+
+  // Poll carousel container until FINISHED (max 10 min, 10s intervals)
+  const POLL_INTERVAL_MS = 10_000;
+  const POLL_MAX_MS = 10 * 60 * 1000;
+  const pollStart = Date.now();
+  let carouselStatusCode: string | null = null;
+
+  while (true) {
+    if (Date.now() - pollStart > POLL_MAX_MS) {
+      await logEvent("failed", "Carousel container not FINISHED after 10 min polling", {
+        carousel_container_id: input.carouselContainerId,
+      });
+      return {
+        ok: false,
+        dryRun: false,
+        status: "failed",
+        carouselContainerId: input.carouselContainerId,
+        carouselStatusCode,
+        platformMediaId: null,
+        errorCode: "carousel_poll_timeout",
+        errorMessage: "Carousel container did not reach FINISHED status within 10 minutes",
+        stage: "poll_carousel_container",
+      };
+    }
+    const poll = await checkInstagramContainerStatus(input.carouselContainerId, accessToken, version);
+    carouselStatusCode = poll.statusCode;
+    if (carouselStatusCode === "FINISHED") break;
+    if (carouselStatusCode === "ERROR") {
+      await logEvent("failed", `Carousel container errored: ${poll.error}`, {
+        carousel_container_id: input.carouselContainerId,
+        status_code: carouselStatusCode,
+      });
+      return {
+        ok: false,
+        dryRun: false,
+        status: "failed",
+        carouselContainerId: input.carouselContainerId,
+        carouselStatusCode,
+        platformMediaId: null,
+        errorCode: "carousel_container_error",
+        errorMessage: `Carousel container errored: ${poll.error ?? "unknown"}`,
+        stage: "poll_carousel_container",
+      };
+    }
+    const elapsed = Math.round((Date.now() - pollStart) / 1000);
+    await logEvent("carousel_polling", `Carousel container status: ${carouselStatusCode ?? "unknown"} — waiting 10s (${elapsed}s elapsed)`, {
+      carousel_container_id: input.carouselContainerId,
+      elapsed_s: elapsed,
+    });
+    await sleepMs(POLL_INTERVAL_MS);
+  }
+
+  await logEvent("carousel_ready", "Carousel container FINISHED — retrying media_publish", {
+    carousel_container_id: input.carouselContainerId,
+    elapsed_ms: Date.now() - pollStart,
+  });
+
+  // Retry media_publish on code 9007 (max 3 retries, delays 20s/40s/80s)
+  const MEDIA_PUBLISH_RETRY_DELAYS_MS = [20_000, 40_000, 80_000];
+  let platformMediaId: string | null = null;
+  let mediaPublishAttempts = 0;
+  let lastPublishErr: { errorCode: string | null; errorMessage: string | null; stage: string } | null = null;
+  let lastPublishErrNumericCode: number | null = null;
+
+  for (let attempt = 0; attempt <= MEDIA_PUBLISH_RETRY_DELAYS_MS.length; attempt++) {
+    if (attempt > 0) {
+      const delay = MEDIA_PUBLISH_RETRY_DELAYS_MS[attempt - 1];
+      await logEvent("media_publish_retry", `media_publish attempt ${attempt + 1} — waiting ${delay / 1000}s`, {
+        attempt: attempt + 1,
+        delay_ms: delay,
+        carousel_container_id: input.carouselContainerId,
+      });
+      await sleepMs(delay);
+    }
+    mediaPublishAttempts = attempt + 1;
+
+    const publishRaw = (await fetch(`${apiBase}/media_publish`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: accessToken, creation_id: input.carouselContainerId }),
+    }).then((r) => r.json()).catch(() => ({}))) as Record<string, unknown> & { id?: string };
+
+    if (publishRaw.id) {
+      platformMediaId = publishRaw.id;
+      break;
+    }
+
+    lastPublishErr = sanitizeIgError(publishRaw, "media_publish");
+    const rawCode = (publishRaw.error as Record<string, unknown> | undefined)?.code;
+    lastPublishErrNumericCode = rawCode != null ? Number(rawCode) : null;
+    if (lastPublishErrNumericCode !== 9007 || attempt >= MEDIA_PUBLISH_RETRY_DELAYS_MS.length) break;
+  }
+
+  if (!platformMediaId) {
+    await logEvent("failed", `Retry publish failed after ${mediaPublishAttempts} attempt(s): ${lastPublishErr?.errorMessage}`, {
+      error_code: lastPublishErr?.errorCode,
+      stage: "media_publish",
+      attempts: mediaPublishAttempts,
+      carousel_container_id: input.carouselContainerId,
+    });
+    return {
+      ok: false,
+      dryRun: false,
+      status: "failed",
+      carouselContainerId: input.carouselContainerId,
+      carouselStatusCode,
+      platformMediaId: null,
+      errorCode: lastPublishErr?.errorCode ?? "media_publish_failed",
+      errorMessage: lastPublishErr?.errorMessage ?? "Unknown error",
+      stage: "media_publish",
+      mediaPublishAttempts,
+    };
+  }
+
+  await logEvent("published", "Instagram carousel published successfully via carousel retry", {
+    platform_media_id: platformMediaId,
+    carousel_container_id: input.carouselContainerId,
+    media_publish_attempts: mediaPublishAttempts,
+  });
+
+  return {
+    ok: true,
+    dryRun: false,
+    status: "published",
+    carouselContainerId: input.carouselContainerId,
+    carouselStatusCode,
+    platformMediaId,
+    errorCode: null,
+    errorMessage: null,
+    mediaPublishAttempts,
   };
 }

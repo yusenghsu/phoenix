@@ -10,7 +10,10 @@ import {
   logJobEvent,
   updateRunStatus,
 } from "@/lib/daily-workflow/service";
-import { publishInstagramCarousel } from "@/lib/social/instagram-publisher";
+import {
+  publishInstagramCarousel,
+  retryExistingCarouselPublish,
+} from "@/lib/social/instagram-publisher";
 import type { PublishStatus } from "@/lib/daily-workflow/types";
 
 export const runtime = "nodejs";
@@ -61,6 +64,134 @@ export async function POST(req: NextRequest) {
 
       const details = await getRunDetails(runId);
       return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ ok: false, status: "error", error: msg }, { status: 500 });
+    }
+  }
+
+  // ── Action: retry media_publish with existing carousel container ─────────────
+  if (body.action === "retry_existing_carousel") {
+    try {
+      const { run, publishJobs } = await getRunDetails(runId);
+      const job = publishJobs.find((j) => j.platform === "instagram");
+
+      if (!job) {
+        return NextResponse.json({ error: "No Instagram publish job found." }, { status: 404 });
+      }
+      if (job.platform_media_id) {
+        return NextResponse.json(
+          { error: "Job already has a media ID — already published." },
+          { status: 409 }
+        );
+      }
+
+      const jobMeta = (job.metadata ?? {}) as { carousel_container_id?: string };
+      const carouselContainerId = jobMeta.carousel_container_id;
+      if (!carouselContainerId) {
+        return NextResponse.json(
+          { error: "No carousel_container_id in job metadata — cannot retry without recreating containers." },
+          { status: 400 }
+        );
+      }
+
+      await logJobEvent({
+        run_id: runId,
+        job_type: "manual_publish",
+        status: "retry_carousel_triggered",
+        message: `Retry carousel triggered via debug dashboard (carousel: ${carouselContainerId.slice(-6)})`,
+        payload: { run_date: run.run_date, source: "debug_dashboard", carousel_container_id: carouselContainerId },
+      }).catch(() => {});
+
+      const retryResult = await retryExistingCarouselPublish({ runId, carouselContainerId });
+
+      let permalink: string | null = null;
+      if (retryResult.status === "published" && retryResult.platformMediaId) {
+        try {
+          const version = process.env.META_GRAPH_API_VERSION ?? "v23.0";
+          const permaParams = new URLSearchParams({
+            fields: "id,permalink",
+            access_token: process.env.META_ACCESS_TOKEN!,
+          });
+          const permaRes = await fetch(
+            `https://graph.facebook.com/${version}/${retryResult.platformMediaId}?${permaParams}`
+          );
+          if (permaRes.ok) {
+            const permaData = (await permaRes.json()) as { permalink?: string };
+            permalink = permaData.permalink ?? null;
+          }
+        } catch { /* non-critical */ }
+      }
+
+      const finalJobStatus: PublishStatus =
+        retryResult.status === "published" ? "manual_published" : (retryResult.status as PublishStatus);
+
+      await updatePublishJobById(job.id, {
+        status: finalJobStatus,
+        error_code: retryResult.errorCode,
+        error_message: retryResult.errorMessage,
+        ...(retryResult.platformMediaId
+          ? { platform_media_id: retryResult.platformMediaId, published_at: new Date().toISOString() }
+          : {}),
+        metadata: {
+          ...job.metadata,
+          error_code: retryResult.errorCode,
+          error_message: retryResult.errorMessage,
+          carousel_status_code: retryResult.carouselStatusCode,
+          media_publish_attempts: retryResult.mediaPublishAttempts,
+          permalink,
+          ...(retryResult.stage ? { error_stage: retryResult.stage } : { error_stage: null }),
+        },
+      });
+
+      if (retryResult.status === "published") {
+        await updateRunStatus(runId, "published", { published_at: new Date().toISOString() });
+        await logJobEvent({
+          run_id: runId,
+          job_type: "manual_publish",
+          status: "succeeded",
+          message: `Instagram carousel published via carousel retry. media_id: ${retryResult.platformMediaId}`,
+          payload: {
+            platform_media_id: retryResult.platformMediaId,
+            carousel_container_id: carouselContainerId,
+            carousel_status_code: retryResult.carouselStatusCode,
+            media_publish_attempts: retryResult.mediaPublishAttempts,
+            permalink,
+          },
+        }).catch(() => {});
+      } else {
+        await logJobEvent({
+          run_id: runId,
+          job_type: "manual_publish",
+          status: retryResult.status,
+          message: retryResult.errorMessage ?? retryResult.status,
+          payload: {
+            dry_run: retryResult.dryRun,
+            error_code: retryResult.errorCode,
+            stage: retryResult.stage,
+            carousel_status_code: retryResult.carouselStatusCode,
+            media_publish_attempts: retryResult.mediaPublishAttempts,
+          },
+        }).catch(() => {});
+      }
+
+      const details = await getRunDetails(runId);
+      return NextResponse.json({
+        ok: retryResult.ok,
+        status: retryResult.status,
+        dryRun: retryResult.dryRun,
+        platformMediaId: retryResult.platformMediaId,
+        permalink,
+        carouselContainerId: retryResult.carouselContainerId,
+        carouselStatusCode: retryResult.carouselStatusCode,
+        mediaPublishAttempts: retryResult.mediaPublishAttempts,
+        errorCode: retryResult.errorCode,
+        errorMessage: retryResult.errorMessage,
+        stage: retryResult.stage,
+        isRetryPath: true,
+        storage_mode: "supabase",
+        ...details,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return NextResponse.json({ ok: false, status: "error", error: msg }, { status: 500 });
@@ -171,6 +302,8 @@ export async function POST(req: NextRequest) {
         container_ids_count: publishResult.containerIds.length,
         carousel_container_id: publishResult.carouselContainerId,
         carousel_container_attempts: publishResult.carouselContainerAttempts,
+        carousel_status_code: publishResult.carouselStatusCode,
+        media_publish_attempts: publishResult.mediaPublishAttempts,
         item_container_count: publishResult.itemContainerStatuses.length,
         permalink,
         ...(publishResult.stage ? { error_stage: publishResult.stage } : {}),
@@ -217,13 +350,16 @@ export async function POST(req: NextRequest) {
       platformMediaId: publishResult.platformMediaId,
       permalink,
       carouselContainerId: publishResult.carouselContainerId,
+      carouselStatusCode: publishResult.carouselStatusCode,
       containerCount: publishResult.containerIds.length,
       carouselContainerAttempts: publishResult.carouselContainerAttempts,
+      mediaPublishAttempts: publishResult.mediaPublishAttempts,
       itemContainerStatuses: publishResult.itemContainerStatuses,
       errorCode: publishResult.errorCode,
       errorMessage: publishResult.errorMessage,
       stage: publishResult.stage,
       preflight: publishResult.preflight,
+      isRetryPath: false,
       storage_mode: "supabase",
       ...details,
     });

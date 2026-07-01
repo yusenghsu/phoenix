@@ -118,13 +118,16 @@ interface ManualPublishResult {
   platformMediaId?: string | null;
   permalink?: string | null;
   carouselContainerId?: string | null;
+  carouselStatusCode?: string | null;
   containerCount?: number;
   carouselContainerAttempts?: number;
+  mediaPublishAttempts?: number;
   itemContainerStatuses?: IGContainerStatus[];
   errorCode?: string | null;
   errorMessage?: string | null;
   stage?: string;
   error?: string;
+  isRetryPath?: boolean;
 }
 
 // ── Storage sync result types (mirrors StorageSyncResult from storage-sync.ts) ─
@@ -175,6 +178,7 @@ export default function DailyRunsDebugPage() {
   const [manualPublishPending, setManualPublishPending] = useState(false);
   const [manualPublishResult, setManualPublishResult] = useState<ManualPublishResult | null>(null);
   const [resetJobPending, setResetJobPending] = useState(false);
+  const [retryCarouselPending, setRetryCarouselPending] = useState(false);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -611,13 +615,16 @@ export default function DailyRunsDebugPage() {
         platformMediaId: data.platformMediaId,
         permalink: data.permalink,
         carouselContainerId: data.carouselContainerId,
+        carouselStatusCode: data.carouselStatusCode,
         containerCount: data.containerCount,
         carouselContainerAttempts: data.carouselContainerAttempts,
+        mediaPublishAttempts: data.mediaPublishAttempts,
         itemContainerStatuses: data.itemContainerStatuses,
         errorCode: data.errorCode,
         errorMessage: data.errorMessage,
         stage: data.stage,
         error: data.error,
+        isRetryPath: data.isRetryPath,
       });
       if (data.run) setRun(data.run);
       if (data.storage_mode) setStorageMode(data.storage_mode);
@@ -635,6 +642,59 @@ export default function DailyRunsDebugPage() {
       });
     } finally {
       setManualPublishPending(false);
+    }
+  };
+
+  const handleRetryCarousel = async () => {
+    if (!run || retryCarouselPending) return;
+    setRetryCarouselPending(true);
+    setManualPublishResult(null);
+    try {
+      const res = await fetch("/api/debug/instagram/publish-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "retry_existing_carousel", run_id: run.id }),
+      });
+      const data = (await res.json()) as ManualPublishResult & {
+        run?: DailyRun;
+        candidates?: TopicCandidate[];
+        slides?: CarouselSlide[];
+        publishJobs?: PublishJob[];
+        events?: JobEvent[];
+        storage_mode?: "supabase" | "local";
+      };
+      setManualPublishResult({
+        ok: data.ok,
+        status: data.status,
+        dryRun: data.dryRun,
+        platformMediaId: data.platformMediaId,
+        permalink: data.permalink,
+        carouselContainerId: data.carouselContainerId,
+        carouselStatusCode: data.carouselStatusCode,
+        mediaPublishAttempts: data.mediaPublishAttempts,
+        errorCode: data.errorCode,
+        errorMessage: data.errorMessage,
+        stage: data.stage,
+        error: data.error,
+        isRetryPath: true,
+      });
+      if (data.run) setRun(data.run);
+      if (data.storage_mode) setStorageMode(data.storage_mode);
+      setDetails({
+        candidates: data.candidates ?? details?.candidates ?? [],
+        slides: data.slides ?? details?.slides ?? [],
+        publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
+        events: data.events ?? details?.events ?? [],
+      });
+    } catch (err) {
+      setManualPublishResult({
+        ok: false,
+        status: "error",
+        isRetryPath: true,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setRetryCarouselPending(false);
     }
   };
 
@@ -1256,8 +1316,17 @@ export default function DailyRunsDebugPage() {
               const alreadyPublished =
                 igJob?.status === "published" || igJob?.status === "manual_published";
               const jobIsFailed = igJob?.status === "failed" && !igJob?.platform_media_id;
+              const jobMeta = (igJob?.metadata ?? {}) as {
+                carousel_container_id?: string;
+                carousel_status_code?: string;
+                error_stage?: string;
+              };
+              const hasRetryableCarousel =
+                jobIsFailed && !!jobMeta.carousel_container_id;
               const canManualPublish =
-                readiness?.canAttemptPublish === true && !alreadyPublished && !manualPublishPending;
+                readiness?.canAttemptPublish === true && !alreadyPublished && !manualPublishPending && !retryCarouselPending;
+              const canRetryCarousel =
+                hasRetryableCarousel && readiness?.canAttemptPublish === true && !retryCarouselPending && !manualPublishPending && !resetJobPending;
               const mediaCheck = readiness?.checks.find((c) => c.key === "media_urls");
               const graphCheck = readiness?.checks.find((c) => c.key === "graph_api_read");
               const bindingCheck = readiness?.checks.find((c) => c.key === "page_ig_binding");
@@ -1358,8 +1427,56 @@ export default function DailyRunsDebugPage() {
                     </div>
                   )}
 
-                  {/* Failed job — reset button */}
-                  {jobIsFailed && (
+                  {/* Retryable carousel — primary retry path */}
+                  {hasRetryableCarousel && (
+                    <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(96,165,250,0.05)", border: "1px solid rgba(96,165,250,0.18)", borderRadius: 8 }}>
+                      <p style={{ color: "#60a5fa", fontSize: 10, fontWeight: 600, marginBottom: 4 }}>
+                        Carousel container 已建立 — 可直接重試 media_publish（不重建 8 個 item containers）
+                      </p>
+                      <p style={{ color: "#6F675E", fontSize: 9, fontFamily: "monospace", marginBottom: 8 }}>
+                        carousel: ****{jobMeta.carousel_container_id!.slice(-4)}
+                        {jobMeta.carousel_status_code ? ` · status: ${jobMeta.carousel_status_code}` : ""}
+                        {jobMeta.error_stage ? ` · failed at: ${jobMeta.error_stage}` : ""}
+                      </p>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          onClick={handleRetryCarousel}
+                          disabled={!canRetryCarousel}
+                          style={{
+                            height: 34, paddingLeft: 14, paddingRight: 14, borderRadius: 7,
+                            background: canRetryCarousel ? "rgba(96,165,250,0.10)" : "rgba(255,255,255,0.02)",
+                            border: `1px solid ${canRetryCarousel ? "rgba(96,165,250,0.28)" : "rgba(255,255,255,0.07)"}`,
+                            color: canRetryCarousel ? "#60a5fa" : "#6F675E",
+                            fontSize: 11, fontWeight: 700,
+                            cursor: canRetryCarousel ? "pointer" : "not-allowed",
+                          }}
+                        >
+                          {retryCarouselPending
+                            ? "重試中…（等待 Meta API，請勿關閉）"
+                            : !readiness
+                            ? "重試發布現有 carousel container（先完成條件檢查）"
+                            : readiness.autoPublishEnabled
+                            ? "重試發布現有 carousel container"
+                            : "重試發布現有 carousel container（需 PHOENIX_AUTO_PUBLISH_ENABLED=true）"}
+                        </button>
+                        <button
+                          onClick={handleResetFailedJob}
+                          disabled={resetJobPending || retryCarouselPending}
+                          style={{
+                            height: 34, paddingLeft: 12, paddingRight: 12, borderRadius: 7,
+                            background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.08)",
+                            color: "#6F675E", fontSize: 10, fontWeight: 600,
+                            cursor: resetJobPending || retryCarouselPending ? "not-allowed" : "pointer",
+                          }}
+                        >
+                          {resetJobPending ? "重置中…" : "重置（放棄此 carousel）"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Failed job — reset button (when no retryable carousel) */}
+                  {jobIsFailed && !hasRetryableCarousel && (
                     <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.16)", borderRadius: 8 }}>
                       <p style={{ color: "#f87171", fontSize: 10, fontWeight: 600, marginBottom: 6 }}>
                         Publish job failed（無 IG media id）— 可重置後重試
@@ -1403,6 +1520,8 @@ export default function DailyRunsDebugPage() {
                       ? "手動發布到 Instagram（Dry-run — PHOENIX_AUTO_PUBLISH_ENABLED=false）"
                       : alreadyPublished
                       ? "手動發布到 Instagram（已發布）"
+                      : hasRetryableCarousel
+                      ? "手動發布到 Instagram（請按上方「重試 carousel」按鈕）"
                       : jobIsFailed
                       ? "手動發布到 Instagram（先重置失敗狀態）"
                       : readiness.checks.some((c) => c.status === "fail")
@@ -1434,15 +1553,21 @@ export default function DailyRunsDebugPage() {
                               Permalink: <span style={{ color: "#60a5fa", fontFamily: "monospace", fontSize: 9 }}>{manualPublishResult.permalink}</span>
                             </p>
                           )}
-                          {manualPublishResult.containerCount != null && (
-                            <p style={{ color: "#6F675E", fontSize: 9, marginTop: 4 }}>
-                              {manualPublishResult.containerCount} item containers
-                              {manualPublishResult.carouselContainerAttempts != null && manualPublishResult.carouselContainerAttempts > 1
-                                ? ` · carousel attempts: ${manualPublishResult.carouselContainerAttempts}`
-                                : ""}
-                              {manualPublishResult.carouselContainerId ? ` · carousel: ****${manualPublishResult.carouselContainerId.slice(-4)}` : ""}
-                            </p>
-                          )}
+                          <p style={{ color: "#6F675E", fontSize: 9, marginTop: 4, lineHeight: 1.6 }}>
+                            {manualPublishResult.isRetryPath
+                              ? "via carousel retry (no item container recreation)"
+                              : manualPublishResult.containerCount != null
+                              ? `${manualPublishResult.containerCount} item containers`
+                              : ""}
+                            {manualPublishResult.carouselContainerAttempts != null && manualPublishResult.carouselContainerAttempts > 1
+                              ? ` · carousel attempts: ${manualPublishResult.carouselContainerAttempts}`
+                              : ""}
+                            {manualPublishResult.carouselContainerId ? ` · carousel: ****${manualPublishResult.carouselContainerId.slice(-4)}` : ""}
+                            {manualPublishResult.carouselStatusCode ? ` · carousel status: ${manualPublishResult.carouselStatusCode}` : ""}
+                            {manualPublishResult.mediaPublishAttempts != null && manualPublishResult.mediaPublishAttempts > 1
+                              ? ` · media_publish attempts: ${manualPublishResult.mediaPublishAttempts}`
+                              : ""}
+                          </p>
                         </>
                       )}
                       {manualDryRun && (
@@ -1453,11 +1578,21 @@ export default function DailyRunsDebugPage() {
                       {manualFailed && (
                         <>
                           <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 5 }}>
-                            Publish failed{manualPublishResult.stage ? ` at stage: ${manualPublishResult.stage}` : ""}
+                            {manualPublishResult.isRetryPath ? "Carousel retry failed" : "Publish failed"}
+                            {manualPublishResult.stage ? ` at stage: ${manualPublishResult.stage}` : ""}
                             {manualPublishResult.carouselContainerAttempts != null && manualPublishResult.carouselContainerAttempts > 1
-                              ? ` (${manualPublishResult.carouselContainerAttempts} attempts)`
+                              ? ` (carousel attempts: ${manualPublishResult.carouselContainerAttempts})`
+                              : ""}
+                            {manualPublishResult.mediaPublishAttempts != null && manualPublishResult.mediaPublishAttempts > 1
+                              ? ` (media_publish attempts: ${manualPublishResult.mediaPublishAttempts})`
                               : ""}
                           </p>
+                          {(manualPublishResult.carouselContainerId || manualPublishResult.carouselStatusCode) && (
+                            <p style={{ color: "#6F675E", fontSize: 9, fontFamily: "monospace", marginBottom: 4 }}>
+                              {manualPublishResult.carouselContainerId ? `carousel: ****${manualPublishResult.carouselContainerId.slice(-4)}` : ""}
+                              {manualPublishResult.carouselStatusCode ? ` · status: ${manualPublishResult.carouselStatusCode}` : ""}
+                            </p>
+                          )}
                           {manualPublishResult.errorCode && (
                             <p style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace", marginBottom: 3 }}>
                               error code: {manualPublishResult.errorCode}
