@@ -204,6 +204,44 @@ interface ProductionChecklistResult {
   runDateUsed: string | null;
 }
 
+// ── First auto-publish rehearsal ──────────────────────────────────────────────
+
+interface RehearsalResult {
+  deployment: {
+    nodeEnv: string;
+    isVercel: boolean;
+    vercelEnv: string | null;
+    vercelUrl: string | null;
+    gitCommitSha: string | null;
+  };
+  autoPublishEnabled: boolean;
+  freshRun: {
+    runId: string | null;
+    runDate: string | null;
+    runStatus: string | null;
+    publicUrlCount: number;
+    publishJobStatus: string | null;
+    hasPlatformMediaId: boolean;
+    isArmable: boolean;
+    blockedReason: string | null;
+  };
+  cronSimulation: {
+    wouldPublish: boolean;
+    reason: string;
+    activeRunId: string | null;
+    activeRunDate: string | null;
+    mediaReadyCount: number;
+    publishJobStatus: string | null;
+    alreadyPublished: boolean;
+    duplicateGuardActive: boolean;
+  };
+  recommendation: {
+    status: "safe_dry_run" | "blocked_already_published" | "ready_to_arm_next_run" | "armed_for_real_publish" | "not_ready";
+    message: string;
+    level: "info" | "success" | "warning" | "danger";
+  };
+}
+
 // ── Storage sync result types (mirrors StorageSyncResult from storage-sync.ts) ─
 
 interface StorageSlideSyncResult {
@@ -256,6 +294,8 @@ export default function DailyRunsDebugPage() {
   const [retryCarouselPending, setRetryCarouselPending] = useState(false);
   const [checklistPending, setChecklistPending] = useState(false);
   const [checklistResult, setChecklistResult] = useState<ProductionChecklistResult | null>(null);
+  const [rehearsalPending, setRehearsalPending] = useState(false);
+  const [rehearsalResult, setRehearsalResult] = useState<RehearsalResult | null>(null);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -806,6 +846,22 @@ export default function DailyRunsDebugPage() {
       console.error("Checklist fetch failed:", err);
     } finally {
       setChecklistPending(false);
+    }
+  };
+
+  const handleFetchRehearsal = async () => {
+    if (rehearsalPending) return;
+    setRehearsalPending(true);
+    setRehearsalResult(null);
+    try {
+      const params = run ? `?run_id=${run.id}` : "";
+      const res = await fetch(`/api/debug/instagram/first-auto-publish-rehearsal${params}`);
+      const data = (await res.json()) as RehearsalResult;
+      setRehearsalResult(data);
+    } catch (err) {
+      console.error("Rehearsal fetch failed:", err);
+    } finally {
+      setRehearsalPending(false);
     }
   };
 
@@ -2223,6 +2279,201 @@ export default function DailyRunsDebugPage() {
                 );
               })()}
             </SectionCard>
+          {/* First Auto-Publish Rehearsal */}
+          <SectionCard title="第一次正式自動發布前演練">
+            <p style={{ color: "#6F675E", fontSize: 10, lineHeight: 1.6, marginBottom: 12 }}>
+              確認系統是否已準備好讓下一個全新未發布的 8/8 READY run 啟動第一次真正的 20:00 自動發布。此區段為純 read-only，不會呼叫任何 publish endpoint。
+            </p>
+            <button
+              onClick={handleFetchRehearsal}
+              disabled={rehearsalPending}
+              style={{
+                height: 34, paddingLeft: 16, paddingRight: 16, borderRadius: 8, marginBottom: 14,
+                background: rehearsalPending ? "rgba(255,255,255,0.03)" : "rgba(96,165,250,0.07)",
+                border: `1px solid ${rehearsalPending ? "rgba(255,255,255,0.07)" : "rgba(96,165,250,0.20)"}`,
+                color: rehearsalPending ? "#6F675E" : "#60a5fa",
+                fontSize: 11, fontWeight: 700, cursor: rehearsalPending ? "not-allowed" : "pointer",
+              }}
+            >
+              {rehearsalPending ? "讀取中…" : "執行前演練檢查（read-only）"}
+            </button>
+
+            {rehearsalResult && (() => {
+              const r = rehearsalResult;
+
+              const recColors: Record<string, string> = {
+                safe_dry_run: "#9B9387",
+                blocked_already_published: "#FB923C",
+                ready_to_arm_next_run: "#4ade80",
+                armed_for_real_publish: "#f87171",
+                not_ready: "#9B9387",
+              };
+              const recBg: Record<string, string> = {
+                safe_dry_run: "rgba(255,255,255,0.02)",
+                blocked_already_published: "rgba(249,115,22,0.06)",
+                ready_to_arm_next_run: "rgba(74,222,128,0.05)",
+                armed_for_real_publish: "rgba(239,68,68,0.08)",
+                not_ready: "rgba(255,255,255,0.02)",
+              };
+              const recBorder: Record<string, string> = {
+                safe_dry_run: "rgba(255,255,255,0.08)",
+                blocked_already_published: "rgba(249,115,22,0.20)",
+                ready_to_arm_next_run: "rgba(74,222,128,0.18)",
+                armed_for_real_publish: "rgba(239,68,68,0.24)",
+                not_ready: "rgba(255,255,255,0.08)",
+              };
+
+              const rowStyle: React.CSSProperties = { display: "flex", gap: 6, alignItems: "flex-start", padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" };
+              const labelStyle: React.CSSProperties = { color: "#6F675E", fontSize: 10, width: 110, flexShrink: 0 };
+              const valStyle: React.CSSProperties = { color: "#CFC7BA", fontSize: 10, fontFamily: "monospace" };
+              const passStyle: React.CSSProperties = { color: "#4ade80", fontSize: 10, fontWeight: 700 };
+              const failStyle: React.CSSProperties = { color: "#f87171", fontSize: 10, fontWeight: 700 };
+              const warnStyle: React.CSSProperties = { color: "#FB923C", fontSize: 10, fontWeight: 700 };
+
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+                  {/* Recommendation banner */}
+                  <div style={{ padding: "10px 12px", background: recBg[r.recommendation.status] ?? "rgba(255,255,255,0.02)", border: `1px solid ${recBorder[r.recommendation.status] ?? "rgba(255,255,255,0.08)"}`, borderRadius: 9 }}>
+                    <p style={{ color: recColors[r.recommendation.status] ?? "#9B9387", fontSize: 11, fontWeight: 700, marginBottom: 4 }}>
+                      {r.recommendation.status.toUpperCase().replace(/_/g, " ")}
+                    </p>
+                    <p style={{ color: "#CFC7BA", fontSize: 11, lineHeight: 1.6 }}>{r.recommendation.message}</p>
+                  </div>
+
+                  {/* 1. Production environment */}
+                  <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 9 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>1 · Production Environment</p>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>env</span>
+                      <span style={r.deployment.nodeEnv === "production" ? passStyle : warnStyle}>{r.deployment.nodeEnv}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>vercel</span>
+                      <span style={r.deployment.isVercel ? passStyle : warnStyle}>{r.deployment.isVercel ? "true" : "false"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>vercel env</span>
+                      <span style={valStyle}>{r.deployment.vercelEnv ?? "—"}</span>
+                    </div>
+                    {r.deployment.vercelUrl && (
+                      <div style={rowStyle}>
+                        <span style={labelStyle}>url</span>
+                        <span style={{ ...valStyle, fontSize: 9, wordBreak: "break-all" }}>{r.deployment.vercelUrl}</span>
+                      </div>
+                    )}
+                    {r.deployment.gitCommitSha && (
+                      <div style={{ ...rowStyle, borderBottom: "none" }}>
+                        <span style={labelStyle}>commit</span>
+                        <span style={{ ...valStyle, fontSize: 9 }}>{r.deployment.gitCommitSha.slice(0, 12)}</span>
+                      </div>
+                    )}
+                    {!r.deployment.isVercel && (
+                      <p style={{ color: "#FB923C", fontSize: 9, marginTop: 6 }}>
+                        ⚠ 非 Vercel 環境 — local dev 無法 arm production auto-publish。請在 Vercel Production env 設定。
+                      </p>
+                    )}
+                  </div>
+
+                  {/* 2. Auto-publish flag */}
+                  <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 9 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>2 · Auto-Publish Flag</p>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>PHOENIX_AUTO_<br/>PUBLISH_ENABLED</span>
+                      <span style={r.autoPublishEnabled ? warnStyle : passStyle}>{r.autoPublishEnabled ? "true" : "false"}</span>
+                    </div>
+                    <p style={{ color: r.autoPublishEnabled ? "#FB923C" : "#4ade80", fontSize: 10, marginTop: 8, lineHeight: 1.5 }}>
+                      {r.autoPublishEnabled
+                        ? "真發模式已啟動：20:00 cron 可能會發布到 Instagram。"
+                        : "目前安全：20:00 只會 dry-run，不會真發。"}
+                    </p>
+                  </div>
+
+                  {/* 3. Fresh run requirement */}
+                  <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 9 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>3 · Fresh Run Requirement</p>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>run</span>
+                      <span style={r.freshRun.runId ? passStyle : failStyle}>{r.freshRun.runId ? `${r.freshRun.runDate} / ${r.freshRun.runId.slice(0, 8)}…` : "none"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>run status</span>
+                      <span style={valStyle}>{r.freshRun.runStatus ?? "—"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>public URLs</span>
+                      <span style={r.freshRun.publicUrlCount === 8 ? passStyle : failStyle}>{r.freshRun.publicUrlCount}/8</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>publish job</span>
+                      <span style={valStyle}>{r.freshRun.publishJobStatus ?? "none"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>platform media id</span>
+                      <span style={r.freshRun.hasPlatformMediaId ? failStyle : passStyle}>{r.freshRun.hasPlatformMediaId ? "present (BLOCKED)" : "none ✓"}</span>
+                    </div>
+                    <div style={{ ...rowStyle, borderBottom: "none" }}>
+                      <span style={labelStyle}>armable</span>
+                      <span style={r.freshRun.isArmable ? passStyle : failStyle}>{r.freshRun.isArmable ? "YES ✓" : "NO"}</span>
+                    </div>
+                    {r.freshRun.blockedReason && (
+                      <p style={{ color: "#FB923C", fontSize: 10, marginTop: 8, lineHeight: 1.5 }}>{r.freshRun.blockedReason}</p>
+                    )}
+                  </div>
+
+                  {/* 4. Cron simulation */}
+                  <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 9 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>4 · 20:00 Cron Decision Simulation</p>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>wouldPublish</span>
+                      <span style={r.cronSimulation.wouldPublish ? failStyle : passStyle}>{r.cronSimulation.wouldPublish ? "TRUE — real publish" : "false — dry-run only"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>reason</span>
+                      <span style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>{r.cronSimulation.reason}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>media ready</span>
+                      <span style={valStyle}>{r.cronSimulation.mediaReadyCount}/8</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>already published</span>
+                      <span style={r.cronSimulation.alreadyPublished ? warnStyle : passStyle}>{r.cronSimulation.alreadyPublished ? "yes (BLOCKED)" : "no ✓"}</span>
+                    </div>
+                    <div style={{ ...rowStyle, borderBottom: "none" }}>
+                      <span style={labelStyle}>duplicate guard</span>
+                      <span style={r.cronSimulation.duplicateGuardActive ? warnStyle : passStyle}>{r.cronSimulation.duplicateGuardActive ? "active (BLOCKED)" : "not active ✓"}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 5+6. Runbook — always visible */}
+            <div style={{ marginTop: 16, padding: "12px 14px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10 }}>
+              <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
+                5+6 · 第一次正式自動發布操作順序（Human Runbook）
+              </p>
+              <p style={{ color: "#FB923C", fontSize: 10, fontWeight: 700, marginBottom: 6 }}>
+                ⚠ 此 runbook 是給真正上線前確認用，步驟一旦開始不可逆。
+              </p>
+              <ol style={{ color: "#9B9387", fontSize: 10, lineHeight: 2, paddingLeft: 18, margin: 0 }}>
+                <li>保持 Production <code style={{ color: "#CFC7BA" }}>PHOENIX_AUTO_PUBLISH_ENABLED=false</code>。</li>
+                <li>等 03:00 產生主題候選。</li>
+                <li>等 17:00 產生新的 8 張輪播影片。</li>
+                <li>到 production <code style={{ color: "#CFC7BA" }}>/debug/daily-runs</code> 確認最新 run 是新的 8/8 READY，且尚未 published / manual_published。</li>
+                <li>確認此前演練顯示 <code style={{ color: "#4ade80" }}>ready_to_arm_next_run</code>。</li>
+                <li>在 <strong style={{ color: "#CFC7BA" }}>Vercel Production env</strong> 把 <code style={{ color: "#CFC7BA" }}>PHOENIX_AUTO_PUBLISH_ENABLED</code> 改成 <code style={{ color: "#FB923C" }}>true</code>。</li>
+                <li>Redeploy production。</li>
+                <li style={{ lineHeight: 1.6, paddingBottom: 4 }}>回 production dashboard 確認：env=production、vercel=true、flag=true、fresh run、<code style={{ color: "#FB923C" }}>wouldPublish:true</code>。</li>
+                <li>等 20:00 cron 自動發文。</li>
+                <li>20:05 後回 dashboard 確認 status 變成 <code style={{ color: "#4ade80" }}>published</code>，並取得 permalink。</li>
+                <li style={{ lineHeight: 1.6, paddingBottom: 4 }}>若成功，可保持 true 做每日自動發布；若只是測試，改回 false 並 redeploy。</li>
+                <li>若失敗：不要重跑生成，不要重複按發文；查看 sanitized error、container IDs、carousel ID，使用 carousel retry path。</li>
+              </ol>
+            </div>
+          </SectionCard>
+
           </>
         )}
 
