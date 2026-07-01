@@ -9,6 +9,10 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ ok: false, error: "Not available in production." }, { status: 403 });
+  }
+
   let body: { type?: string; force?: boolean } = {};
   try {
     body = (await req.json()) as { type?: string; force?: boolean };

@@ -33,37 +33,92 @@ async function isSupabaseReady(): Promise<boolean> {
 
 export const runtime = "nodejs";
 
+// Read-only in production. Returns is_production flag and run_source for client awareness.
 export async function GET(req: NextRequest) {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "Not available in production." }, { status: 403 });
-  }
+  const isProduction = process.env.NODE_ENV === "production";
 
   try {
     const { searchParams } = new URL(req.url);
     const runId = searchParams.get("run_id");
+    const findLatest = searchParams.get("latest") === "1";
     const today = getTaiwanDateString();
+
+    // In production: Supabase only, no local fallback
+    if (isProduction) {
+      if (runId) {
+        const details = await getRunDetails(runId);
+        return NextResponse.json({ status: "ok", storage_mode: "supabase", is_production: true, run_source: "specific", ...details });
+      }
+
+      if (!findLatest) {
+        // Try today's run first
+        const todayRun = await getTodayRun();
+        if (todayRun) {
+          return NextResponse.json({ status: "ok", storage_mode: "supabase", is_production: true, run: todayRun, today, run_source: "today" });
+        }
+      }
+
+      // Fallback: latest ready_to_publish or published run
+      const db = createServerClient();
+      if (db) {
+        const { data } = await db
+          .from("phoenix_daily_runs")
+          .select("*")
+          .in("status", ["ready_to_publish", "published"])
+          .order("run_date", { ascending: false })
+          .limit(1)
+          .single();
+        if (data) {
+          const run = data as DailyRun;
+          return NextResponse.json({
+            status: "ok", storage_mode: "supabase", is_production: true,
+            run, today, run_source: run.status === "published" ? "latest_published" : "latest_ready",
+          });
+        }
+      }
+
+      return NextResponse.json({ status: "ok", storage_mode: "supabase", is_production: true, run: null, today, run_source: null });
+    }
+
+    // Dev mode — existing behaviour with local fallback
     const supabaseReady = await isSupabaseReady();
+
+    if (findLatest) {
+      if (!supabaseReady) return NextResponse.json({ error: "Supabase not available." }, { status: 503 });
+      const db = createServerClient();
+      if (!db) return NextResponse.json({ error: "DB unavailable." }, { status: 500 });
+      const { data } = await db
+        .from("phoenix_daily_runs")
+        .select("*")
+        .in("status", ["ready_to_publish", "published"])
+        .order("run_date", { ascending: false })
+        .limit(1)
+        .single();
+      if (!data) return NextResponse.json({ status: "ok", run: null, message: "No ready_to_publish or published run found", run_source: null });
+      const run = data as DailyRun;
+      const details = await getRunDetails(run.id);
+      return NextResponse.json({ status: "ok", storage_mode: "supabase", is_production: false, run_source: run.status === "published" ? "latest_published" : "latest_ready", ...details });
+    }
 
     if (runId) {
       if (supabaseReady) {
         const details = await getRunDetails(runId);
-        return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details });
+        return NextResponse.json({ status: "ok", storage_mode: "supabase", is_production: false, ...details });
       }
-      // Fallback: return run from local store with empty child collections
       const run = await localGetTodayRun(today);
       if (!run || run.id !== runId) {
         return NextResponse.json({ status: "error", error: "Run not found." }, { status: 404 });
       }
-      return NextResponse.json({ status: "ok", storage_mode: "local", run, candidates: [], slides: [], publishJobs: [], events: [] });
+      return NextResponse.json({ status: "ok", storage_mode: "local", is_production: false, run, candidates: [], slides: [], publishJobs: [], events: [] });
     }
 
     if (supabaseReady) {
       const run = await getTodayRun();
-      return NextResponse.json({ status: "ok", storage_mode: "supabase", run: run ?? null, today });
+      return NextResponse.json({ status: "ok", storage_mode: "supabase", is_production: false, run: run ?? null, today, run_source: "today" });
     }
 
     const run = await localGetTodayRun(today);
-    return NextResponse.json({ status: "ok", storage_mode: "local", run: run ?? null, today });
+    return NextResponse.json({ status: "ok", storage_mode: "local", is_production: false, run: run ?? null, today, run_source: "today" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ status: "error", error: msg }, { status: 500 });

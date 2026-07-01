@@ -6,11 +6,8 @@ import { getTodayRun, getRunDetails } from "@/lib/daily-workflow/service";
 
 export const runtime = "nodejs";
 
+// Read-only — safe in production. Never calls publish endpoints or returns credentials.
 export async function GET(req: NextRequest) {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "Not available in production." }, { status: 403 });
-  }
-
   const { searchParams } = new URL(req.url);
   const runIdParam = searchParams.get("run_id") ?? undefined;
 

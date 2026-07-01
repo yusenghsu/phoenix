@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
 import type {
   DailyRun,
   TopicCandidate,
@@ -237,6 +239,7 @@ export default function DailyRunsDebugPage() {
   const [run, setRun] = useState<DailyRun | null>(null);
   const [details, setDetails] = useState<Details | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [runSource, setRunSource] = useState<"today" | "latest_ready" | "latest_published" | "specific" | null>(null);
   const [actionPending, setActionPending] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [selectingTopicId, setSelectingTopicId] = useState<string | null>(null);
@@ -297,13 +300,32 @@ export default function DailyRunsDebugPage() {
         storage_mode?: "supabase" | "local";
         run?: DailyRun;
         today?: string;
+        run_source?: "today" | "latest_ready" | "latest_published" | "specific" | null;
+        // find_latest=1 path also returns details inline
+        candidates?: TopicCandidate[];
+        slides?: CarouselSlide[];
+        publishJobs?: PublishJob[];
+        events?: JobEvent[];
         error?: string;
       };
       if (data.status === "ok") {
         setToday(data.today ?? "");
         setStorageMode(data.storage_mode ?? null);
         setRun(data.run ?? null);
-        if (data.run) await fetchDetails(data.run.id);
+        if (data.run_source !== undefined) setRunSource(data.run_source ?? null);
+        if (data.run) {
+          // If the GET response already includes details (latest=1 path), use them directly
+          if (data.slides !== undefined) {
+            setDetails({
+              candidates: data.candidates ?? [],
+              slides: data.slides ?? [],
+              publishJobs: data.publishJobs ?? [],
+              events: data.events ?? [],
+            });
+          } else {
+            await fetchDetails(data.run.id);
+          }
+        }
       } else {
         setError(data.error ?? "Unknown error");
       }
@@ -568,11 +590,8 @@ export default function DailyRunsDebugPage() {
     setSyncResult(null);
     setReadiness(null);
     try {
-      const res = await fetch("/api/debug/daily-runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "find_latest_ready_run" }),
-      });
+      // GET with ?latest=1 works in both dev and production
+      const res = await fetch("/api/debug/daily-runs?latest=1");
       const data = (await res.json()) as {
         status: string;
         run?: DailyRun;
@@ -581,12 +600,14 @@ export default function DailyRunsDebugPage() {
         publishJobs?: PublishJob[];
         events?: JobEvent[];
         storage_mode?: "supabase" | "local";
+        run_source?: "today" | "latest_ready" | "latest_published" | "specific" | null;
         message?: string;
         error?: string;
       };
       if (data.status === "ok" && data.run) {
         if (data.storage_mode) setStorageMode(data.storage_mode);
         setRun(data.run);
+        if (data.run_source !== undefined) setRunSource(data.run_source ?? null);
         setDetails({
           candidates: data.candidates ?? [],
           slides: data.slides ?? [],
@@ -813,10 +834,26 @@ export default function DailyRunsDebugPage() {
           </p>
           {run && today && run.run_date !== today && (
             <p style={{ color: "#FB923C", fontSize: 10, marginTop: 4 }}>
-              目前查看：{run.run_date} run（非今日）
+              {runSource === "latest_published"
+                ? `今天沒有 run，已自動載入最新 published run（${run.run_date}）`
+                : runSource === "latest_ready"
+                ? `今天沒有 run，已自動載入最新 8/8 READY run（${run.run_date}）`
+                : `目前查看：${run.run_date} run（非今日）`}
             </p>
           )}
         </div>
+
+        {/* Production read-only banner */}
+        {IS_PRODUCTION && (
+          <div style={{ marginBottom: 16, padding: "10px 14px", background: "rgba(249,115,22,0.07)", border: "1px solid rgba(249,115,22,0.20)", borderRadius: 10 }}>
+            <p style={{ color: "#FB923C", fontSize: 11, fontWeight: 700, marginBottom: 2 }}>
+              Production read-only mode
+            </p>
+            <p style={{ color: "#9B9387", fontSize: 10 }}>
+              Cron / debug / write actions are disabled. Read-only data and launch checklist are available.
+            </p>
+          </div>
+        )}
 
         {/* Error */}
         {error && (
@@ -826,7 +863,7 @@ export default function DailyRunsDebugPage() {
         )}
 
         {/* No run today */}
-        {!loading && !run && (
+        {!loading && !run && !IS_PRODUCTION && (
           <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "24px 20px", marginBottom: 20, textAlign: "center" }}>
             <p style={{ color: "#9B9387", fontSize: 13, marginBottom: 16 }}>今日尚無 Daily Run 記錄</p>
             <button
@@ -875,7 +912,7 @@ export default function DailyRunsDebugPage() {
                   >
                     重新整理
                   </button>
-                  {!confirmReset ? (
+                  {!IS_PRODUCTION && (!confirmReset ? (
                     <button
                       onClick={() => setConfirmReset(true)}
                       disabled={actionPending}
@@ -899,7 +936,7 @@ export default function DailyRunsDebugPage() {
                         取消
                       </button>
                     </>
-                  )}
+                  ))}
                 </div>
               </div>
             </SectionCard>
@@ -972,7 +1009,7 @@ export default function DailyRunsDebugPage() {
                       <p style={{ color: "#f87171", fontSize: 11, fontWeight: 600, marginBottom: 8 }}>
                         ⚠ 生成可能卡住（最後事件 {Math.floor((lastEventMs ?? 0) / 60000)} 分鐘前），請檢查 Runway Dashboard 或 server logs。
                       </p>
-                      {!confirmResetGeneration ? (
+                      {!IS_PRODUCTION && (!confirmResetGeneration ? (
                         <button
                           onClick={() => setConfirmResetGeneration(true)}
                           disabled={actionPending}
@@ -999,7 +1036,7 @@ export default function DailyRunsDebugPage() {
                             </button>
                           </div>
                         </div>
-                      )}
+                      ))}
                     </div>
                   )}
                 </SectionCard>
@@ -1063,7 +1100,7 @@ export default function DailyRunsDebugPage() {
                           <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", background: "rgba(249,115,22,0.08)", borderRadius: 8, border: "1px solid rgba(249,115,22,0.22)" }}>
                             <span style={{ color: "#FB923C", fontSize: 11, fontWeight: 700 }}>✓ 已選擇</span>
                           </div>
-                        ) : (
+                        ) : !IS_PRODUCTION ? (
                           <button
                             onClick={() => handleSelectTopic(c.id)}
                             disabled={isThisRunSelected || selectingTopicId !== null}
@@ -1078,7 +1115,7 @@ export default function DailyRunsDebugPage() {
                           >
                             {selectingTopicId === c.id ? "選擇中…" : "選擇此主題"}
                           </button>
-                        )}
+                        ) : null}
                       </div>
                     );
                   })}
@@ -1161,7 +1198,7 @@ export default function DailyRunsDebugPage() {
                   </div>
 
                   {/* Sync button */}
-                  {readySlides.length > 0 && (
+                  {readySlides.length > 0 && !IS_PRODUCTION && (
                     <div>
                       <button
                         onClick={handleSyncStorage}
@@ -1518,7 +1555,7 @@ export default function DailyRunsDebugPage() {
                   )}
 
                   {/* Retryable carousel — primary retry path */}
-                  {hasRetryableCarousel && (
+                  {hasRetryableCarousel && !IS_PRODUCTION && (
                     <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(96,165,250,0.05)", border: "1px solid rgba(96,165,250,0.18)", borderRadius: 8 }}>
                       <p style={{ color: "#60a5fa", fontSize: 10, fontWeight: 600, marginBottom: 4 }}>
                         Carousel container 已建立 — 可直接重試 media_publish（不重建 8 個 item containers）
@@ -1566,7 +1603,7 @@ export default function DailyRunsDebugPage() {
                   )}
 
                   {/* Failed job — reset button (when no retryable carousel) */}
-                  {jobIsFailed && !hasRetryableCarousel && (
+                  {jobIsFailed && !hasRetryableCarousel && !IS_PRODUCTION && (
                     <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.16)", borderRadius: 8 }}>
                       <p style={{ color: "#f87171", fontSize: 10, fontWeight: 600, marginBottom: 6 }}>
                         Publish job failed（無 IG media id）— 可重置後重試
@@ -1587,7 +1624,7 @@ export default function DailyRunsDebugPage() {
                   )}
 
                   {/* Publish button */}
-                  <button
+                  {!IS_PRODUCTION && <button
                     onClick={handleManualPublish}
                     disabled={!canManualPublish}
                     style={{
@@ -1617,7 +1654,7 @@ export default function DailyRunsDebugPage() {
                       : readiness.checks.some((c) => c.status === "fail")
                       ? "手動發布到 Instagram（條件未通過）"
                       : "手動發布到 Instagram（一次）"}
-                  </button>
+                  </button>}
 
                   {/* Result */}
                   {manualPublishResult && (
@@ -2189,8 +2226,8 @@ export default function DailyRunsDebugPage() {
           </>
         )}
 
-        {/* Cron Test Panel */}
-        <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 18px", marginTop: 24 }}>
+        {/* Cron Test Panel — dev only */}
+        {!IS_PRODUCTION && <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 14, padding: "16px 18px", marginTop: 24 }}>
           <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 4 }}>Cron Test Panel</p>
           <p style={{ color: "#6F675E", fontSize: 10, marginBottom: 10 }}>Debug only. 03:00 calls OpenAI. 17:00 calls OpenAI（keyframe）+ Runway（motion）— 消耗 credit。20:00 calls Instagram only if PHOENIX_AUTO_PUBLISH_ENABLED=true + META env complete。不呼叫 LINE。</p>
           {/* Stuck state warning */}
@@ -2288,7 +2325,7 @@ export default function DailyRunsDebugPage() {
               )}
             </div>
           )}
-        </div>
+        </div>}
 
         <p style={{ color: "#6F675E", fontSize: 9, textAlign: "center", marginTop: 24 }}>
           Debug only · Not available in production · No IG · No LINE · No auto-publish

@@ -6,11 +6,8 @@ import { checkInstagramReadiness } from "@/lib/social/instagram-readiness";
 
 export const runtime = "nodejs";
 
+// Read-only — safe in production. Never returns credentials or tokens.
 export async function GET(req: NextRequest) {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "Not available in production." }, { status: 403 });
-  }
-
   const { searchParams } = new URL(req.url);
   // Accept both ?runId= and ?run_id= for convenience
   const runId = searchParams.get("runId") ?? searchParams.get("run_id") ?? undefined;
