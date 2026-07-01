@@ -113,6 +113,9 @@ export async function GET(req: NextRequest) {
     isVercel: !!process.env.VERCEL,
     vercelEnv: process.env.VERCEL_ENV ?? null,
     nodeEnv: process.env.NODE_ENV,
+    // Safe deployment metadata — not secrets
+    vercelUrl: process.env.VERCEL_URL ?? null,
+    gitCommitSha: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
   };
 
   const cronSchedule = {
@@ -132,9 +135,48 @@ export async function GET(req: NextRequest) {
     hasCarouselRetryPath: true,
   };
 
-  // ── Final recommendation ───────────────────────────────────────────────────
+  // ── Shared derived booleans ───────────────────────────────────────────────
   const allMetaEnvReady =
     metaEnv.accessToken && metaEnv.igUserId && metaEnv.pageId && metaEnv.graphApiVersion;
+
+  // ── Cron 20:00 dry-run simulation (no publish calls) ─────────────────────
+  let cronWouldPublish = false;
+  let cronReason = "";
+
+  if (!autoPublishEnabled) {
+    cronWouldPublish = false;
+    cronReason = "PHOENIX_AUTO_PUBLISH_ENABLED=false — 20:00 cron remains dry-run only";
+  } else if (!allMetaEnvReady) {
+    cronWouldPublish = false;
+    cronReason = "META env vars not fully configured — publish would be skipped";
+  } else if (!runId) {
+    cronWouldPublish = false;
+    cronReason = "No active run found — nothing to publish";
+  } else if (publicUrlCount < 8) {
+    cronWouldPublish = false;
+    cronReason = `Media not ready: ${publicUrlCount}/8 public HTTPS URLs (need 8)`;
+  } else if (alreadyPublished) {
+    cronWouldPublish = false;
+    cronReason = "Duplicate guard active: this run already has a platform media ID";
+  } else if (!publishJobEligible) {
+    cronWouldPublish = false;
+    cronReason = `Publish job not eligible (status: ${publishJobStatus ?? "none"})`;
+  } else {
+    cronWouldPublish = true;
+    cronReason = "All gates pass — 20:00 cron would attempt a real Instagram publish";
+  }
+
+  const cronSimulation = {
+    wouldPublish: cronWouldPublish,
+    reason: cronReason,
+    activeRunId: runId,
+    activeRunDate: runDate,
+    mediaReadyCount: publicUrlCount,
+    publishJobStatus,
+    alreadyPublished,
+  };
+
+  // ── Final recommendation ───────────────────────────────────────────────────
   const graphApiReady =
     graphApi.readTest.status === "pass" && graphApi.pageBinding.status === "pass";
 
@@ -180,6 +222,7 @@ export async function GET(req: NextRequest) {
     media,
     publishJob,
     cronSchedule,
+    cronSimulation,
     failureSafety,
     deployment,
     recommendation,

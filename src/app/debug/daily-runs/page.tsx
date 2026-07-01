@@ -181,6 +181,17 @@ interface ProductionChecklistResult {
     isVercel: boolean;
     vercelEnv: string | null;
     nodeEnv: string;
+    vercelUrl: string | null;
+    gitCommitSha: string | null;
+  };
+  cronSimulation: {
+    wouldPublish: boolean;
+    reason: string;
+    activeRunId: string | null;
+    activeRunDate: string | null;
+    mediaReadyCount: number;
+    publishJobStatus: string | null;
+    alreadyPublished: boolean;
   };
   recommendation: {
     status: string;
@@ -2071,6 +2082,98 @@ export default function DailyRunsDebugPage() {
                       <p style={{ color: recColor[level] ?? recColor.info, fontSize: 11, fontWeight: 700, lineHeight: 1.6 }}>
                         {cl.recommendation.message}
                       </p>
+                    </div>
+
+                    {/* Divider */}
+                    <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 14 }}>
+                      <p style={{ color: "#9B9387", fontSize: 10, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
+                        Vercel Production Dry-run Verification
+                      </p>
+
+                      {/* Runtime environment */}
+                      <div style={{ marginBottom: 12 }}>
+                        <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>Runtime Environment</p>
+                        <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 7, display: "flex", flexDirection: "column", gap: 4 }}>
+                          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 9, color: "#6F675E" }}>
+                              env: <span style={{ color: "#CFC7BA", fontFamily: "monospace" }}>{cl.deployment.nodeEnv}</span>
+                            </span>
+                            <span style={{ fontSize: 9, color: "#6F675E" }}>
+                              vercel: <span style={{ color: cl.deployment.isVercel ? "#FB923C" : "#9B9387", fontFamily: "monospace" }}>
+                                {cl.deployment.isVercel ? (cl.deployment.vercelEnv ?? "true") : "false"}
+                              </span>
+                            </span>
+                            {!cl.deployment.isVercel && (
+                              <span style={{ fontSize: 9, color: "#4ade80" }}>local dev ✓</span>
+                            )}
+                          </div>
+                          {cl.deployment.vercelUrl && (
+                            <p style={{ fontSize: 9, color: "#9B9387", fontFamily: "monospace" }}>
+                              url: {cl.deployment.vercelUrl}
+                            </p>
+                          )}
+                          {cl.deployment.gitCommitSha && (
+                            <p style={{ fontSize: 9, color: "#6F675E", fontFamily: "monospace" }}>
+                              sha: {cl.deployment.gitCommitSha.slice(0, 12)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Cron 20:00 simulation */}
+                      <div style={{ marginBottom: 12 }}>
+                        <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>
+                          Cron 20:00 Dry-run Simulation（no publish calls）
+                        </p>
+                        <div style={{
+                          padding: "10px 12px", borderRadius: 8,
+                          background: cl.cronSimulation.wouldPublish ? "rgba(239,68,68,0.07)" : "rgba(74,222,128,0.06)",
+                          border: `1px solid ${cl.cronSimulation.wouldPublish ? "rgba(239,68,68,0.20)" : "rgba(74,222,128,0.16)"}`,
+                        }}>
+                          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 6 }}>
+                            <span style={{
+                              fontSize: 11, fontWeight: 700,
+                              color: cl.cronSimulation.wouldPublish ? "#f87171" : "#4ade80",
+                            }}>
+                              wouldPublish: {cl.cronSimulation.wouldPublish ? "true ⚠" : "false ✓"}
+                            </span>
+                          </div>
+                          <p style={{ color: "#9B9387", fontSize: 10, marginBottom: 8, lineHeight: 1.5 }}>
+                            {cl.cronSimulation.reason}
+                          </p>
+                          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 9, color: "#6F675E" }}>
+                              run: <span style={{ color: "#9B9387", fontFamily: "monospace" }}>{cl.cronSimulation.activeRunDate ?? "—"}</span>
+                            </span>
+                            <span style={{ fontSize: 9, color: "#6F675E" }}>
+                              media: <span style={{ color: cl.cronSimulation.mediaReadyCount === 8 ? "#4ade80" : "#f87171", fontWeight: 700 }}>
+                                {cl.cronSimulation.mediaReadyCount}/8
+                              </span>
+                            </span>
+                            <span style={{ fontSize: 9, color: "#6F675E" }}>
+                              job: <span style={{ color: "#9B9387", fontFamily: "monospace" }}>
+                                {cl.cronSimulation.publishJobStatus ?? "none"}
+                              </span>
+                            </span>
+                            <span style={{ fontSize: 9, color: "#6F675E" }}>
+                              already published: <span style={{ color: cl.cronSimulation.alreadyPublished ? "#FB923C" : "#4ade80", fontWeight: 700 }}>
+                                {cl.cronSimulation.alreadyPublished ? "yes" : "no"}
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Deployment note */}
+                      <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 7 }}>
+                        <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 4 }}>Production Deployment Note</p>
+                        <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.6 }}>
+                          Vercel production env must be configured separately.
+                          Local <code style={{ color: "#CFC7BA" }}>.env.local</code> does not affect Vercel.
+                          After deploying, verify <code style={{ color: "#CFC7BA" }}>PHOENIX_AUTO_PUBLISH_ENABLED</code> in
+                          Vercel Dashboard → Settings → Environment Variables before 20:00.
+                        </p>
+                      </div>
                     </div>
 
                     {/* Run info footer */}
