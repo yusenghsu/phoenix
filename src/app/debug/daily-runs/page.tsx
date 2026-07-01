@@ -1133,6 +1133,122 @@ export default function DailyRunsDebugPage() {
               )}
             </SectionCard>
 
+            {/* Meta / Instagram Setup Panel */}
+            {(() => {
+              const envRows: Array<{ label: string; checkKey: string; required: boolean }> = [
+                { label: "META_ACCESS_TOKEN", checkKey: "meta_access_token", required: true },
+                { label: "META_IG_USER_ID", checkKey: "meta_ig_user_id", required: true },
+                { label: "META_PAGE_ID", checkKey: "meta_page_id", required: false },
+                { label: "META_GRAPH_API_VERSION", checkKey: "meta_graph_api_version", required: false },
+                { label: "PHOENIX_AUTO_PUBLISH_ENABLED", checkKey: "auto_publish_enabled", required: false },
+              ];
+              const setupSteps = [
+                "確認 Instagram 帳號是 Professional account（Business 或 Creator）",
+                "確認 Instagram 已連到 Facebook Page",
+                "到 Meta Developer → Graph API Explorer 取得 User Access Token（需要 instagram_basic 和 instagram_content_publish 權限）",
+                "在 Instagram 設定 → 關於此帳號 取得 IG User ID",
+                "將 META_ACCESS_TOKEN、META_IG_USER_ID、META_PAGE_ID、META_GRAPH_API_VERSION=v23.0 填入 .env.local",
+                "重新啟動 dev server（npm run dev）",
+                "回到本頁按「測試 Meta / IG 帳號讀取」確認連線",
+              ];
+              const graphCheck = readiness?.checks.find((c) => c.key === "graph_api_read");
+              const autoPublishCheck = readiness?.checks.find((c) => c.key === "auto_publish_enabled");
+              const isAutoPublishOn = autoPublishCheck?.status === "warning"; // warning = enabled = dangerous
+
+              return (
+                <SectionCard title="Meta / Instagram Setup">
+                  {/* Env status table */}
+                  <div style={{ marginBottom: 14 }}>
+                    <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 6 }}>環境變數</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {envRows.map(({ label, checkKey, required }) => {
+                        const check = readiness?.checks.find((c) => c.key === checkKey);
+                        const status = check?.status;
+                        const color =
+                          status === "pass" ? "#4ade80"
+                          : status === "fail" ? "#f87171"
+                          : status === "warning" ? "#FB923C"
+                          : "#6F675E";
+                        const statusLabel =
+                          status === "pass" ? "exists"
+                          : status === "fail" ? "missing"
+                          : status === "warning" ? (checkKey === "auto_publish_enabled" ? "enabled" : "not set")
+                          : "—";
+                        return (
+                          <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                            <span style={{ color: "#CFC7BA", fontSize: 10, fontFamily: "monospace" }}>{label}</span>
+                            <span style={{ color, fontSize: 9, fontWeight: 700 }}>
+                              {statusLabel}{required && status === "fail" ? " *" : ""}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <p style={{ color: "#6F675E", fontSize: 9, marginTop: 5 }}>* 必填 · — 尚未檢查（請按按鈕）</p>
+                  </div>
+
+                  {/* PHOENIX_AUTO_PUBLISH_ENABLED safety notice */}
+                  <div style={{ marginBottom: 14, padding: "8px 10px", borderRadius: 8, background: isAutoPublishOn ? "rgba(239,68,68,0.07)" : "rgba(74,222,128,0.05)", border: `1px solid ${isAutoPublishOn ? "rgba(239,68,68,0.20)" : "rgba(74,222,128,0.15)"}` }}>
+                    <p style={{ fontSize: 10, fontWeight: 600, color: isAutoPublishOn ? "#f87171" : "#4ade80" }}>
+                      {isAutoPublishOn
+                        ? "PHOENIX_AUTO_PUBLISH_ENABLED=true — 危險：20:00 cron 會真的發文到 Instagram。先在 .env.local 設回 false。"
+                        : "PHOENIX_AUTO_PUBLISH_ENABLED=false — 安全。20:00 cron 為 dry-run，不會真的發文。填妥 Meta env 後可測試帳號連線。"}
+                    </p>
+                  </div>
+
+                  {/* Setup steps */}
+                  <div style={{ marginBottom: 14 }}>
+                    <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 6 }}>設定步驟</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                      {setupSteps.map((step, i) => (
+                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <span style={{ color: "#FB923C", fontSize: 9, fontWeight: 700, flexShrink: 0, width: 14 }}>{i + 1}.</span>
+                          <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>{step}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Read test result */}
+                  {readiness?.account && (
+                    <div style={{ marginBottom: 12, padding: "8px 10px", background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.18)", borderRadius: 8 }}>
+                      <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 5 }}>IG 帳號驗證成功</p>
+                      <p style={{ color: "#4ade80", fontSize: 14, fontWeight: 700, marginBottom: 2 }}>@{readiness.account.username}</p>
+                      <p style={{ color: "#9B9387", fontSize: 10 }}>
+                        {readiness.account.accountType ?? "—"} · {readiness.account.mediaCount ?? "—"} posts
+                      </p>
+                    </div>
+                  )}
+                  {readiness && !readiness.account && graphCheck?.status === "fail" && (
+                    <div style={{ marginBottom: 12, padding: "8px 10px", background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.18)", borderRadius: 8 }}>
+                      <p style={{ color: "#f87171", fontSize: 10, fontWeight: 600, marginBottom: 4 }}>Graph API Read 失敗</p>
+                      <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>{graphCheck.message}</p>
+                    </div>
+                  )}
+                  {readiness && !readiness.account && graphCheck?.status !== "fail" && !readiness.checks.find(c => c.key === "meta_access_token" && c.status === "pass") && (
+                    <div style={{ marginBottom: 12, padding: "7px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 7 }}>
+                      <p style={{ color: "#6F675E", fontSize: 10 }}>META_ACCESS_TOKEN 和 META_IG_USER_ID 填妥後即可測試帳號連線。</p>
+                    </div>
+                  )}
+
+                  {/* Button — shares readiness state */}
+                  <button
+                    onClick={handleCheckReadiness}
+                    disabled={readinessPending}
+                    style={{
+                      height: 36, paddingLeft: 16, paddingRight: 16, borderRadius: 8,
+                      background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.10)",
+                      color: readinessPending ? "#6F675E" : "#CFC7BA",
+                      fontSize: 12, fontWeight: 600, cursor: readinessPending ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {readinessPending ? "測試中…" : "測試 Meta / IG 帳號讀取"}
+                  </button>
+                </SectionCard>
+              );
+            })()}
+
             {/* Job Events */}
             <SectionCard title="事件紀錄">
               {!details || details.events.length === 0 ? (

@@ -102,7 +102,16 @@ export async function checkInstagramReadiness(
     message: hasIgUserId ? "Set" : "Missing — required for Instagram API",
   });
 
-  // 4. META_GRAPH_API_VERSION
+  // 4. META_PAGE_ID (optional but recommended)
+  const hasPageId = Boolean(process.env.META_PAGE_ID);
+  checks.push({
+    key: "meta_page_id",
+    label: "META_PAGE_ID",
+    status: hasPageId ? "pass" : "warning",
+    message: hasPageId ? "Set" : "Not set — recommended for full Meta integration",
+  });
+
+  // 5. META_GRAPH_API_VERSION
   const apiVersion = process.env.META_GRAPH_API_VERSION ?? "v23.0";
   const hasApiVersion = Boolean(process.env.META_GRAPH_API_VERSION);
   checks.push({
@@ -225,11 +234,18 @@ export async function checkInstagramReadiness(
         };
         const err = errData.error;
         const fbtrace = err?.fbtrace_id ? ` | trace: ${err.fbtrace_id}` : "";
+        const code = err?.code ?? readRes.status;
+        const hint =
+          code === 190 ? " → Token expired or invalid — renew in Meta Developer"
+          : code === 200 || code === 10 ? " → Token lacks instagram_basic or instagram_content_publish permission"
+          : code === 100 ? " → Invalid META_IG_USER_ID — verify in Instagram Settings → About → Account"
+          : code === 803 ? " → IG User ID not found — account may not be a Professional account"
+          : " → Check account type (must be Business or Creator) and Facebook Page connection";
         checks.push({
           key: "graph_api_read",
           label: "Graph API Read Test",
           status: "fail",
-          message: `API error ${err?.code ?? readRes.status}: ${err?.message ?? "unknown"}${fbtrace}`,
+          message: `API error ${code}: ${err?.message ?? "unknown"}${fbtrace}${hint}`,
         });
       }
     } catch (err) {
