@@ -101,6 +101,22 @@ interface IGReadinessResult {
   error?: string;
 }
 
+// ── Manual publish result ─────────────────────────────────────────────────────
+
+interface ManualPublishResult {
+  ok: boolean;
+  status: string;
+  dryRun?: boolean;
+  platformMediaId?: string | null;
+  permalink?: string | null;
+  carouselContainerId?: string | null;
+  containerCount?: number;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  stage?: string;
+  error?: string;
+}
+
 // ── Storage sync result types (mirrors StorageSyncResult from storage-sync.ts) ─
 
 interface StorageSlideSyncResult {
@@ -146,6 +162,8 @@ export default function DailyRunsDebugPage() {
   const [syncResult, setSyncResult] = useState<StorageSyncResult | null>(null);
   const [readinessPending, setReadinessPending] = useState(false);
   const [readiness, setReadiness] = useState<IGReadinessResult | null>(null);
+  const [manualPublishPending, setManualPublishPending] = useState(false);
+  const [manualPublishResult, setManualPublishResult] = useState<ManualPublishResult | null>(null);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -515,6 +533,56 @@ export default function DailyRunsDebugPage() {
       });
     } finally {
       setReadinessPending(false);
+    }
+  };
+
+  const handleManualPublish = async () => {
+    if (!run || manualPublishPending) return;
+    setManualPublishPending(true);
+    setManualPublishResult(null);
+    try {
+      const res = await fetch("/api/debug/instagram/publish-manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: run.id }),
+      });
+      const data = (await res.json()) as ManualPublishResult & {
+        run?: DailyRun;
+        candidates?: TopicCandidate[];
+        slides?: CarouselSlide[];
+        publishJobs?: PublishJob[];
+        events?: JobEvent[];
+        storage_mode?: "supabase" | "local";
+      };
+      setManualPublishResult({
+        ok: data.ok,
+        status: data.status,
+        dryRun: data.dryRun,
+        platformMediaId: data.platformMediaId,
+        permalink: data.permalink,
+        carouselContainerId: data.carouselContainerId,
+        containerCount: data.containerCount,
+        errorCode: data.errorCode,
+        errorMessage: data.errorMessage,
+        stage: data.stage,
+        error: data.error,
+      });
+      if (data.run) setRun(data.run);
+      if (data.storage_mode) setStorageMode(data.storage_mode);
+      setDetails({
+        candidates: data.candidates ?? details?.candidates ?? [],
+        slides: data.slides ?? details?.slides ?? [],
+        publishJobs: data.publishJobs ?? details?.publishJobs ?? [],
+        events: data.events ?? details?.events ?? [],
+      });
+    } catch (err) {
+      setManualPublishResult({
+        ok: false,
+        status: "error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setManualPublishPending(false);
     }
   };
 
@@ -1129,6 +1197,198 @@ export default function DailyRunsDebugPage() {
                 </div>
               )}
             </SectionCard>
+
+            {/* Manual Instagram Publish Test */}
+            {(() => {
+              const igJob = details?.publishJobs.find((j) => j.platform === "instagram");
+              const alreadyPublished =
+                igJob?.status === "published" || igJob?.status === "manual_published";
+              const canManualPublish =
+                readiness?.canAttemptPublish === true && !alreadyPublished && !manualPublishPending;
+              const mediaCheck = readiness?.checks.find((c) => c.key === "media_urls");
+              const graphCheck = readiness?.checks.find((c) => c.key === "graph_api_read");
+              const bindingCheck = readiness?.checks.find((c) => c.key === "page_ig_binding");
+              const autoEnabled = readiness?.autoPublishEnabled === true;
+
+              const summaryChecks: Array<{ label: string; status: "pass" | "fail" | "warning" | null; msg: string }> = [
+                {
+                  label: "PHOENIX_AUTO_PUBLISH_ENABLED",
+                  status: autoEnabled ? "warning" : "pass",
+                  msg: autoEnabled ? "true — 真發模式" : "false — dry-run 模式",
+                },
+                {
+                  label: "Graph API Read Test",
+                  status: graphCheck?.status ?? null,
+                  msg: graphCheck?.message ?? (readiness ? "—" : "尚未檢查"),
+                },
+                {
+                  label: "Page → IG Binding",
+                  status: bindingCheck?.status ?? null,
+                  msg: bindingCheck?.message ?? (readiness ? "—" : "尚未檢查"),
+                },
+                {
+                  label: "Final MP4 URLs",
+                  status: mediaCheck?.status ?? null,
+                  msg: mediaCheck?.message ?? (readiness ? "—" : "尚未檢查"),
+                },
+                {
+                  label: "Publish Job",
+                  status: alreadyPublished ? "warning" : "pass",
+                  msg: igJob ? `${igJob.status}` : "pending",
+                },
+              ];
+
+              const manualSucceeded =
+                manualPublishResult?.ok === true && manualPublishResult.status === "published";
+              const manualDryRun = manualPublishResult?.dryRun === true;
+              const manualFailed =
+                manualPublishResult && !manualPublishResult.ok && !manualPublishResult.dryRun;
+
+              return (
+                <SectionCard title="Manual Instagram Publish Test">
+                  {/* Readiness summary */}
+                  <div style={{ marginBottom: 14 }}>
+                    <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 6 }}>發布條件</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                      {summaryChecks.map(({ label, status, msg }) => {
+                        const color =
+                          status === "pass" ? "#4ade80"
+                          : status === "fail" ? "#f87171"
+                          : status === "warning" ? "#FB923C"
+                          : "#6F675E";
+                        const icon =
+                          status === "pass" ? "✓"
+                          : status === "fail" ? "✗"
+                          : status === "warning" ? "!"
+                          : "—";
+                        return (
+                          <div key={label} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "3px 0" }}>
+                            <span style={{ color, fontSize: 10, fontWeight: 700, flexShrink: 0, width: 10, marginTop: 1 }}>{icon}</span>
+                            <div>
+                              <span style={{ color: "#CFC7BA", fontSize: 10, fontWeight: 600 }}>{label}</span>
+                              <span style={{ color: "#6F675E", fontSize: 9, marginLeft: 8 }}>{msg}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* No readiness yet */}
+                  {!readiness && (
+                    <div style={{ marginBottom: 12, padding: "8px 10px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8 }}>
+                      <p style={{ color: "#9B9387", fontSize: 10 }}>
+                        先按「檢查 Instagram 發布條件」確認所有連線通過，再回到此處發布。
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Dry-run notice */}
+                  {readiness && !autoEnabled && (
+                    <div style={{ marginBottom: 12, padding: "8px 10px", background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 8 }}>
+                      <p style={{ color: "#4ade80", fontSize: 10, fontWeight: 600, marginBottom: 2 }}>目前為 dry-run 模式</p>
+                      <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>
+                        若要真發，請手動把 <code style={{ color: "#FB923C" }}>PHOENIX_AUTO_PUBLISH_ENABLED=true</code> 填入 .env.local，重啟 dev server，再回來按手動發布。
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Already published */}
+                  {alreadyPublished && (
+                    <div style={{ marginBottom: 12, padding: "8px 10px", background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.18)", borderRadius: 8 }}>
+                      <p style={{ color: "#FB923C", fontSize: 10, fontWeight: 600 }}>
+                        此 run 已發布到 Instagram（status: {igJob?.status}）。不重複發布。
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Publish button */}
+                  <button
+                    onClick={handleManualPublish}
+                    disabled={!canManualPublish}
+                    style={{
+                      height: 40, paddingLeft: 18, paddingRight: 18, borderRadius: 9, marginBottom: 10,
+                      background: canManualPublish
+                        ? "rgba(249,115,22,0.09)"
+                        : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${canManualPublish ? "rgba(249,115,22,0.28)" : "rgba(255,255,255,0.07)"}`,
+                      color: canManualPublish ? "#FB923C" : "#6F675E",
+                      fontSize: 13, fontWeight: 700,
+                      cursor: canManualPublish ? "pointer" : "not-allowed",
+                      display: "block", width: "100%", textAlign: "left",
+                    }}
+                  >
+                    {manualPublishPending
+                      ? "發布中…（請勿關閉此頁面）"
+                      : !readiness
+                      ? "手動發布到 Instagram（先完成條件檢查）"
+                      : !autoEnabled
+                      ? "手動發布到 Instagram（Dry-run — PHOENIX_AUTO_PUBLISH_ENABLED=false）"
+                      : alreadyPublished
+                      ? "手動發布到 Instagram（已發布）"
+                      : readiness.checks.some((c) => c.status === "fail")
+                      ? "手動發布到 Instagram（條件未通過）"
+                      : "手動發布到 Instagram（一次）"}
+                  </button>
+
+                  {/* Result */}
+                  {manualPublishResult && (
+                    <div style={{
+                      padding: "10px 12px", borderRadius: 9,
+                      background: manualSucceeded
+                        ? "rgba(74,222,128,0.07)"
+                        : manualDryRun
+                        ? "rgba(255,255,255,0.03)"
+                        : "rgba(239,68,68,0.06)",
+                      border: `1px solid ${manualSucceeded ? "rgba(74,222,128,0.20)" : manualDryRun ? "rgba(255,255,255,0.08)" : "rgba(239,68,68,0.20)"}`,
+                    }}>
+                      {manualSucceeded && (
+                        <>
+                          <p style={{ color: "#4ade80", fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Instagram publish succeeded</p>
+                          {manualPublishResult.platformMediaId && (
+                            <p style={{ color: "#9B9387", fontSize: 10, marginBottom: 3 }}>
+                              IG media id: <span style={{ color: "#CFC7BA", fontFamily: "monospace" }}>{manualPublishResult.platformMediaId}</span>
+                            </p>
+                          )}
+                          {manualPublishResult.permalink && (
+                            <p style={{ color: "#9B9387", fontSize: 10, marginBottom: 3 }}>
+                              Permalink: <span style={{ color: "#60a5fa", fontFamily: "monospace", fontSize: 9 }}>{manualPublishResult.permalink}</span>
+                            </p>
+                          )}
+                          {manualPublishResult.containerCount != null && (
+                            <p style={{ color: "#6F675E", fontSize: 9, marginTop: 4 }}>
+                              {manualPublishResult.containerCount} item containers · carousel: {manualPublishResult.carouselContainerId?.slice(0, 12)}…
+                            </p>
+                          )}
+                        </>
+                      )}
+                      {manualDryRun && (
+                        <p style={{ color: "#9B9387", fontSize: 10 }}>
+                          Dry-run only — no real publish. Set PHOENIX_AUTO_PUBLISH_ENABLED=true and restart to enable.
+                        </p>
+                      )}
+                      {manualFailed && (
+                        <>
+                          <p style={{ color: "#f87171", fontSize: 11, fontWeight: 700, marginBottom: 5 }}>
+                            Publish failed{manualPublishResult.stage ? ` at stage: ${manualPublishResult.stage}` : ""}
+                          </p>
+                          {manualPublishResult.errorCode && (
+                            <p style={{ color: "#f87171", fontSize: 9, fontFamily: "monospace", marginBottom: 3 }}>
+                              {manualPublishResult.errorCode}
+                            </p>
+                          )}
+                          {(manualPublishResult.errorMessage ?? manualPublishResult.error) && (
+                            <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>
+                              {manualPublishResult.errorMessage ?? manualPublishResult.error}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </SectionCard>
+              );
+            })()}
 
             {/* Meta / Instagram Setup Panel */}
             {(() => {

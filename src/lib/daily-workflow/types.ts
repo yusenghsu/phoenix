@@ -47,6 +47,7 @@ export type PublishStatus =
   | "queued"
   | "publishing"
   | "published"
+  | "manual_published"
   | "failed"
   | "skipped"
   | "dry_run"
