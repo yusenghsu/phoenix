@@ -95,6 +95,9 @@ interface IGReadinessResult {
   account?: { igUserId?: string; username?: string; accountType?: string; mediaCount?: number };
   missingEnv: string[];
   mediaPreflight: { total: number; publicCount: number; localCount: number; invalidUrls: string[] };
+  runIdUsed?: string;
+  runDateUsed?: string;
+  fallbackUsed?: boolean;
   error?: string;
 }
 
@@ -452,12 +455,54 @@ export default function DailyRunsDebugPage() {
     }
   };
 
+  const handleFindLatestReadyRun = async () => {
+    setActionPending(true);
+    setError(null);
+    setSyncResult(null);
+    setReadiness(null);
+    try {
+      const res = await fetch("/api/debug/daily-runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "find_latest_ready_run" }),
+      });
+      const data = (await res.json()) as {
+        status: string;
+        run?: DailyRun;
+        candidates?: TopicCandidate[];
+        slides?: CarouselSlide[];
+        publishJobs?: PublishJob[];
+        events?: JobEvent[];
+        storage_mode?: "supabase" | "local";
+        message?: string;
+        error?: string;
+      };
+      if (data.status === "ok" && data.run) {
+        if (data.storage_mode) setStorageMode(data.storage_mode);
+        setRun(data.run);
+        setDetails({
+          candidates: data.candidates ?? [],
+          slides: data.slides ?? [],
+          publishJobs: data.publishJobs ?? [],
+          events: data.events ?? [],
+        });
+      } else {
+        setError(data.message ?? data.error ?? "No ready run found");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActionPending(false);
+    }
+  };
+
   const handleCheckReadiness = async () => {
     if (readinessPending) return;
     setReadinessPending(true);
     setReadiness(null);
     try {
-      const params = run ? `?run_id=${run.id}` : "";
+      // Always pass the run currently shown on screen — never let the API drift to today's run
+      const params = run ? `?runId=${run.id}` : "";
       const res = await fetch(`/api/debug/instagram/readiness${params}`);
       const data = (await res.json()) as IGReadinessResult;
       setReadiness(data);
@@ -481,12 +526,26 @@ export default function DailyRunsDebugPage() {
         <div style={{ marginBottom: 28 }}>
           <p style={{ color: "#9B9387", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Phoenix · Debug</p>
           <h1 style={{ color: "#FAFAF9", fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 4 }}>Daily Run Dashboard</h1>
-          <p style={{ color: "#9B9387", fontSize: 12 }}>台灣時間今日：{loading ? "讀取中…" : today}</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <p style={{ color: "#9B9387", fontSize: 12 }}>台灣時間今日：{loading ? "讀取中…" : today}</p>
+            <button
+              onClick={handleFindLatestReadyRun}
+              disabled={actionPending}
+              style={{ height: 30, paddingLeft: 12, paddingRight: 12, borderRadius: 7, background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)", color: "#9B9387", fontSize: 10, fontWeight: 600, cursor: actionPending ? "not-allowed" : "pointer", flexShrink: 0 }}
+            >
+              查看最新 8/8 READY Run
+            </button>
+          </div>
           <p style={{ color: storageMode === "supabase" ? "#4ade80" : storageMode === "local" ? "#FB923C" : "#6F675E", fontSize: 10, marginTop: 4 }}>
             {storageMode === "supabase" && "狀態儲存：Supabase phoenix_daily_runs ✓"}
             {storageMode === "local" && "狀態儲存：本機 JSON（Supabase tables 尚未套用）"}
             {storageMode === null && "確認儲存模式中…"}
           </p>
+          {run && today && run.run_date !== today && (
+            <p style={{ color: "#FB923C", fontSize: 10, marginTop: 4 }}>
+              目前查看：{run.run_date} run（非今日）
+            </p>
+          )}
         </div>
 
         {/* Error */}
@@ -1029,6 +1088,16 @@ export default function DailyRunsDebugPage() {
                 </div>
               )}
 
+              {/* 0-slide hint: viewing a run with no slides yet */}
+              {readiness && readiness.mediaPreflight.total === 0 && readiness.runDateUsed && (
+                <div style={{ marginBottom: 10, padding: "7px 10px", background: "rgba(249,115,22,0.05)", border: "1px solid rgba(249,115,22,0.18)", borderRadius: 7 }}>
+                  <p style={{ color: "#FB923C", fontSize: 10 }}>
+                    目前檢查的是 {readiness.runDateUsed} run，此 run 尚未生成 slides。
+                    請使用「查看最新 8/8 READY Run」切換至已完成的發文包。
+                  </p>
+                </div>
+              )}
+
               {/* Error */}
               {readiness?.error && (
                 <p style={{ color: "#f87171", fontSize: 10, marginBottom: 8 }}>{readiness.error}</p>
@@ -1040,7 +1109,7 @@ export default function DailyRunsDebugPage() {
                 disabled={readinessPending}
                 style={{
                   height: 36, paddingLeft: 16, paddingRight: 16, borderRadius: 8,
-                  background: readinessPending ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.04)",
+                  background: "rgba(255,255,255,0.04)",
                   border: "1px solid rgba(255,255,255,0.10)",
                   color: readinessPending ? "#6F675E" : "#CFC7BA",
                   fontSize: 12, fontWeight: 600, cursor: readinessPending ? "not-allowed" : "pointer",
@@ -1048,6 +1117,20 @@ export default function DailyRunsDebugPage() {
               >
                 {readinessPending ? "檢查中…" : "檢查 Instagram 發布條件"}
               </button>
+
+              {/* Debug info */}
+              {readiness?.runIdUsed && (
+                <div style={{ marginTop: 10, padding: "6px 9px", background: "rgba(255,255,255,0.02)", borderRadius: 7 }}>
+                  <p style={{ color: "#6F675E", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 4 }}>Readiness Run</p>
+                  <p style={{ color: "#9B9387", fontSize: 9, fontFamily: "monospace" }}>
+                    {readiness.runDateUsed} / {readiness.runIdUsed.slice(0, 8)}…
+                  </p>
+                  <p style={{ color: "#6F675E", fontSize: 9, marginTop: 2 }}>
+                    Slides: {readiness.mediaPreflight.total} · Public: {readiness.mediaPreflight.publicCount}
+                    {readiness.fallbackUsed ? " · Fallback: true（today's run）" : ""}
+                  </p>
+                </div>
+              )}
             </SectionCard>
 
             {/* Job Events */}

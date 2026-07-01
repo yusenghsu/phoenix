@@ -3,7 +3,7 @@
 // Never logs or returns META_ACCESS_TOKEN or any credential.
 import "server-only";
 
-import { getRunDetails } from "@/lib/daily-workflow/service";
+import { getRunDetails, getTodayRun } from "@/lib/daily-workflow/service";
 
 export interface ReadinessCheck {
   key: string;
@@ -34,6 +34,9 @@ export interface InstagramReadinessResult {
   account?: IGAccountInfo;
   missingEnv: string[];
   mediaPreflight: MediaPreflight;
+  runIdUsed?: string;
+  runDateUsed?: string;
+  fallbackUsed?: boolean;
 }
 
 function isPublicUrl(url: string): boolean {
@@ -51,6 +54,22 @@ export async function checkInstagramReadiness(
   const checks: ReadinessCheck[] = [];
   const missingEnv: string[] = [];
   let account: IGAccountInfo | undefined;
+
+  // Resolve which run to check — use provided runId, or fall back to today's run
+  let effectiveRunId = input.runId;
+  let fallbackUsed = false;
+  let runDateUsed: string | undefined;
+
+  if (!effectiveRunId) {
+    try {
+      const todayRun = await getTodayRun();
+      if (todayRun) {
+        effectiveRunId = todayRun.id;
+        runDateUsed = todayRun.run_date;
+        fallbackUsed = true;
+      }
+    } catch { /* non-critical */ }
+  }
 
   // 1. PHOENIX_AUTO_PUBLISH_ENABLED
   const autoPublishEnabled = process.env.PHOENIX_AUTO_PUBLISH_ENABLED === "true";
@@ -93,12 +112,14 @@ export async function checkInstagramReadiness(
     message: hasApiVersion ? `Set: ${apiVersion}` : `Not set — using default: ${apiVersion}`,
   });
 
-  // 5. Media URLs from run (requires runId)
+  // 5. Media URLs — must use the specific runId, never silently drift to today's run
   let mediaPreflight: MediaPreflight = { total: 0, publicCount: 0, localCount: 0, invalidUrls: [] };
 
-  if (input.runId) {
+  if (effectiveRunId) {
     try {
-      const { slides, publishJobs } = await getRunDetails(input.runId);
+      const { run: runData, slides, publishJobs } = await getRunDetails(effectiveRunId);
+      runDateUsed = runData.run_date; // authoritative date from DB
+
       const readySlides = slides.filter((s) => s.final_ratio_status === "passed_4_5");
       const finalUrls = readySlides.map((s) => s.final_video_url ?? "");
       const publicCount = finalUrls.filter(isPublicUrl).length;
@@ -113,19 +134,24 @@ export async function checkInstagramReadiness(
       checks.push({
         key: "media_urls",
         label: "Final MP4 URLs（8 張）",
-        status: allPublic ? "pass" : readySlides.length === 0 ? "fail" : "warning",
+        status: allPublic ? "pass" : readySlides.length === 0 ? "warning" : "fail",
         message: allPublic
           ? "8/8 final MP4s are public HTTPS URLs"
+          : readySlides.length === 0
+          ? `No READY slides in run ${runData.run_date} — generation not yet complete`
           : `${publicCount}/${readySlides.length} public — ${invalidUrls.length} not public`,
       });
 
-      // 6. Publish job status
+      // 6. Publish job (scoped to same run)
       const igJob = publishJobs.find((j) => j.platform === "instagram");
       if (igJob) {
         checks.push({
           key: "publish_job",
           label: "Publish Job",
-          status: igJob.status === "published" ? "warning" : igJob.status === "failed" ? "warning" : "pass",
+          status:
+            igJob.status === "published" ? "warning"
+            : igJob.status === "failed" ? "warning"
+            : "pass",
           message:
             igJob.status === "published"
               ? `Already published (${igJob.published_at?.slice(0, 16) ?? "—"}) — re-publishing not recommended`
@@ -154,17 +180,17 @@ export async function checkInstagramReadiness(
       key: "media_urls",
       label: "Final MP4 URLs（8 張）",
       status: "warning",
-      message: "No run ID — cannot check media URLs",
+      message: "No run available — create or select a daily run first",
     });
   }
 
-  // 7. Graph API read test (GET only — reads account info, never creates media)
+  // 7. Graph API read test — GET only, reads account info, never creates media
   if (hasAccessToken && hasIgUserId) {
     const igUserId = process.env.META_IG_USER_ID!;
     const accessToken = process.env.META_ACCESS_TOKEN!;
 
     try {
-      // access_token in query param is standard Meta Graph API — never stored or logged
+      // access_token in query param is standard Meta Graph API — not stored or logged
       const params = new URLSearchParams({
         fields: "id,username,account_type,media_count",
         access_token: accessToken,
@@ -236,5 +262,8 @@ export async function checkInstagramReadiness(
     account,
     missingEnv,
     mediaPreflight,
+    runIdUsed: effectiveRunId,
+    runDateUsed,
+    fallbackUsed,
   };
 }

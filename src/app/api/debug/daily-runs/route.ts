@@ -187,6 +187,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details, run });
     }
 
+    if (body.action === "find_latest_ready_run") {
+      if (!supabaseReady) {
+        return NextResponse.json({ error: "Supabase not available." }, { status: 503 });
+      }
+      const db = createServerClient();
+      if (!db) return NextResponse.json({ error: "DB unavailable." }, { status: 500 });
+
+      const { data } = await db
+        .from("phoenix_daily_runs")
+        .select("*")
+        .in("status", ["ready_to_publish", "published"])
+        .order("run_date", { ascending: false })
+        .limit(1)
+        .single();
+
+      if (!data) {
+        return NextResponse.json({ status: "ok", run: null, message: "No ready_to_publish or published run found" });
+      }
+
+      const details = await getRunDetails((data as { id: string }).id);
+      return NextResponse.json({ status: "ok", storage_mode: "supabase", ...details });
+    }
+
     if (body.action === "sync_final_videos_to_storage" && body.run_id) {
       if (!supabaseReady) {
         return NextResponse.json({ error: "Supabase not available." }, { status: 503 });
