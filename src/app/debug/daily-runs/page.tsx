@@ -204,6 +204,61 @@ interface ProductionChecklistResult {
   runDateUsed: string | null;
 }
 
+// ── Cron observability ────────────────────────────────────────────────────────
+
+interface CronEventSummary {
+  triggeredAt: string;
+  jobType: string;
+  status: string;
+  runId: string | null;
+  message: string | null;
+  payload: Record<string, unknown>;
+}
+
+interface CronObservabilityResult {
+  runtime: {
+    nodeEnv: string;
+    isVercel: boolean;
+    vercelEnv: string | null;
+    vercelUrl: string | null;
+    gitCommitSha: string | null;
+    currentTaiwanTime: string;
+    checkedAt: string;
+  };
+  cronSchedule: Array<{
+    time: string;
+    purpose: string;
+    label: string;
+    provider: string;
+    callsInstagram: boolean;
+    consumesCredits?: boolean;
+    gatedByEnvFlag?: boolean;
+    expectedResult: string;
+  }>;
+  lastExecutions: {
+    ideas: CronEventSummary | null;
+    generate: CronEventSummary | null;
+    publish: CronEventSummary | null;
+  };
+  publishAudit: {
+    autoPublishEnabled: boolean;
+    runId: string | null;
+    runDate: string | null;
+    runStatus: string | null;
+    mediaReadyCount: number;
+    publishJobStatus: string | null;
+    alreadyPublished: boolean;
+    duplicateGuardActive: boolean;
+    wouldPublish: boolean;
+    reason: string;
+  };
+  nextSchedule: {
+    ideas: string;
+    generate: string;
+    publish: string;
+  };
+}
+
 // ── First auto-publish rehearsal ──────────────────────────────────────────────
 
 interface RehearsalResult {
@@ -296,6 +351,8 @@ export default function DailyRunsDebugPage() {
   const [checklistResult, setChecklistResult] = useState<ProductionChecklistResult | null>(null);
   const [rehearsalPending, setRehearsalPending] = useState(false);
   const [rehearsalResult, setRehearsalResult] = useState<RehearsalResult | null>(null);
+  const [observabilityPending, setObservabilityPending] = useState(false);
+  const [observabilityResult, setObservabilityResult] = useState<CronObservabilityResult | null>(null);
   const [cronResult, setCronResult] = useState<{
     ok?: boolean;
     job_type: string;
@@ -846,6 +903,22 @@ export default function DailyRunsDebugPage() {
       console.error("Checklist fetch failed:", err);
     } finally {
       setChecklistPending(false);
+    }
+  };
+
+  const handleFetchObservability = async () => {
+    if (observabilityPending) return;
+    setObservabilityPending(true);
+    setObservabilityResult(null);
+    try {
+      const params = run ? `?run_id=${run.id}` : "";
+      const res = await fetch(`/api/debug/cron/observability${params}`);
+      const data = (await res.json()) as CronObservabilityResult;
+      setObservabilityResult(data);
+    } catch (err) {
+      console.error("Observability fetch failed:", err);
+    } finally {
+      setObservabilityPending(false);
     }
   };
 
@@ -2279,6 +2352,222 @@ export default function DailyRunsDebugPage() {
                 );
               })()}
             </SectionCard>
+          {/* Production Cron Observability */}
+          <SectionCard title="Production Cron Observability">
+            <p style={{ color: "#6F675E", fontSize: 10, lineHeight: 1.6, marginBottom: 12 }}>
+              查看 Vercel cron 03:00 / 17:00 / 20:00 實際執行紀錄與下次排程時間。純 read-only — 不觸發任何 cron，不發布，不呼叫 provider。
+            </p>
+            <button
+              onClick={handleFetchObservability}
+              disabled={observabilityPending}
+              style={{
+                height: 34, paddingLeft: 16, paddingRight: 16, borderRadius: 8, marginBottom: 14,
+                background: observabilityPending ? "rgba(255,255,255,0.03)" : "rgba(96,165,250,0.07)",
+                border: `1px solid ${observabilityPending ? "rgba(255,255,255,0.07)" : "rgba(96,165,250,0.20)"}`,
+                color: observabilityPending ? "#6F675E" : "#60a5fa",
+                fontSize: 11, fontWeight: 700, cursor: observabilityPending ? "not-allowed" : "pointer",
+              }}
+            >
+              {observabilityPending ? "讀取中…" : "讀取 Cron 執行紀錄（read-only）"}
+            </button>
+
+            {observabilityResult && (() => {
+              const ob = observabilityResult;
+
+              const rowStyle: React.CSSProperties = { display: "flex", gap: 6, alignItems: "flex-start", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" };
+              const labelStyle: React.CSSProperties = { color: "#6F675E", fontSize: 10, width: 120, flexShrink: 0 };
+              const monoStyle: React.CSSProperties = { color: "#CFC7BA", fontSize: 10, fontFamily: "monospace" };
+              const passStyle: React.CSSProperties = { color: "#4ade80", fontSize: 10, fontWeight: 700 };
+              const failStyle: React.CSSProperties = { color: "#f87171", fontSize: 10, fontWeight: 700 };
+              const warnStyle: React.CSSProperties = { color: "#FB923C", fontSize: 10, fontWeight: 700 };
+
+              const formatTaiwan = (iso: string) =>
+                new Date(iso).toLocaleString("zh-TW", {
+                  timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit",
+                  hour: "2-digit", minute: "2-digit", hour12: false,
+                });
+
+              const CronEventRow = ({ label, ev }: { label: string; ev: typeof ob.lastExecutions.ideas }) => (
+                <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8 }}>
+                  <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 6 }}>{label}</p>
+                  {ev ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={rowStyle}>
+                        <span style={labelStyle}>last triggered</span>
+                        <span style={monoStyle}>{formatTaiwan(ev.triggeredAt)}</span>
+                      </div>
+                      <div style={rowStyle}>
+                        <span style={labelStyle}>status</span>
+                        <span style={
+                          ev.status === "triggered" || ev.status === "ok" || ev.status.includes("success") || ev.status.includes("complete") || ev.status.includes("published")
+                            ? passStyle
+                            : ev.status.includes("skip") || ev.status.includes("dry_run")
+                            ? warnStyle
+                            : ev.status.includes("error") || ev.status.includes("fail")
+                            ? failStyle
+                            : { color: "#9B9387", fontSize: 10 }
+                        }>{ev.status}</span>
+                      </div>
+                      {ev.runId && (
+                        <div style={rowStyle}>
+                          <span style={labelStyle}>run id</span>
+                          <span style={monoStyle}>{ev.runId.slice(0, 8)}…</span>
+                        </div>
+                      )}
+                      {ev.message && (
+                        <div style={{ ...rowStyle, borderBottom: "none" }}>
+                          <span style={labelStyle}>message</span>
+                          <span style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>{ev.message}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p style={{ color: "#6F675E", fontSize: 10 }}>尚無紀錄。等待下一次 Vercel cron 觸發。</p>
+                  )}
+                </div>
+              );
+
+              const hasAnyExecution =
+                ob.lastExecutions.ideas || ob.lastExecutions.generate || ob.lastExecutions.publish;
+
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+                  {/* 1. Runtime */}
+                  <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 9 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>1 · Runtime</p>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>env</span>
+                      <span style={ob.runtime.nodeEnv === "production" ? passStyle : warnStyle}>{ob.runtime.nodeEnv}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>vercel</span>
+                      <span style={ob.runtime.isVercel ? passStyle : warnStyle}>{ob.runtime.isVercel ? "true" : "false"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>vercel env</span>
+                      <span style={monoStyle}>{ob.runtime.vercelEnv ?? "—"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>台灣現在時間</span>
+                      <span style={monoStyle}>{ob.runtime.currentTaiwanTime}</span>
+                    </div>
+                    {ob.runtime.vercelUrl && (
+                      <div style={rowStyle}>
+                        <span style={labelStyle}>deployment url</span>
+                        <span style={{ ...monoStyle, fontSize: 9, wordBreak: "break-all" }}>{ob.runtime.vercelUrl}</span>
+                      </div>
+                    )}
+                    {ob.runtime.gitCommitSha && (
+                      <div style={{ ...rowStyle, borderBottom: "none" }}>
+                        <span style={labelStyle}>commit</span>
+                        <span style={{ ...monoStyle, fontSize: 9 }}>{ob.runtime.gitCommitSha.slice(0, 12)}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 2. Cron schedule */}
+                  <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 9 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>2 · Cron Schedule</p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {ob.cronSchedule.map((c) => (
+                        <div key={c.purpose} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                          <span style={{ color: "#FB923C", fontFamily: "monospace", fontSize: 10, width: 90, flexShrink: 0, fontWeight: 700 }}>{c.time}</span>
+                          <div style={{ flex: 1 }}>
+                            <p style={{ color: "#CFC7BA", fontSize: 10, fontWeight: 600 }}>{c.label}</p>
+                            <p style={{ color: "#6F675E", fontSize: 9, lineHeight: 1.5 }}>
+                              {c.provider}
+                              {c.callsInstagram && <span style={{ color: "#FB923C", marginLeft: 6 }}>· calls Instagram</span>}
+                              {c.gatedByEnvFlag && <span style={{ color: "#FB923C", marginLeft: 6 }}>· gated by PHOENIX_AUTO_PUBLISH_ENABLED</span>}
+                              {c.consumesCredits && <span style={{ color: "#f87171", marginLeft: 6 }}>· consumes credits</span>}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 3. Last executions */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase" }}>3 · Last Cron Executions</p>
+                    {!hasAnyExecution && (
+                      <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8 }}>
+                        <p style={{ color: "#6F675E", fontSize: 10, lineHeight: 1.6 }}>
+                          尚無 cron 執行紀錄。先保持 PHOENIX_AUTO_PUBLISH_ENABLED=false，等待下一次 03:00 / 17:00 / 20:00 production cron 自然執行，再回來檢查紀錄。
+                        </p>
+                      </div>
+                    )}
+                    <CronEventRow label="03:00 daily_ideas" ev={ob.lastExecutions.ideas} />
+                    <CronEventRow label="17:00 daily_generate" ev={ob.lastExecutions.generate} />
+                    <CronEventRow label="20:00 daily_publish" ev={ob.lastExecutions.publish} />
+                  </div>
+
+                  {/* 4. 20:00 decision audit */}
+                  <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 9 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>4 · 20:00 Decision Audit</p>
+                    <div style={{ marginBottom: 8, padding: "8px 10px", background: ob.publishAudit.wouldPublish ? "rgba(239,68,68,0.08)" : "rgba(74,222,128,0.05)", border: `1px solid ${ob.publishAudit.wouldPublish ? "rgba(239,68,68,0.24)" : "rgba(74,222,128,0.18)"}`, borderRadius: 7 }}>
+                      <p style={{ color: ob.publishAudit.wouldPublish ? "#f87171" : "#4ade80", fontSize: 11, fontWeight: 700, marginBottom: 4 }}>
+                        {ob.publishAudit.wouldPublish ? "wouldPublish: TRUE — real Instagram publish" : "wouldPublish: false — dry-run only"}
+                      </p>
+                      <p style={{ color: "#9B9387", fontSize: 10, lineHeight: 1.5 }}>{ob.publishAudit.reason}</p>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>PHOENIX_AUTO_<br/>PUBLISH_ENABLED</span>
+                      <span style={ob.publishAudit.autoPublishEnabled ? warnStyle : passStyle}>{ob.publishAudit.autoPublishEnabled ? "true" : "false"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>run</span>
+                      <span style={monoStyle}>{ob.publishAudit.runId ? `${ob.publishAudit.runDate} / ${ob.publishAudit.runId.slice(0, 8)}…` : "none"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>run status</span>
+                      <span style={monoStyle}>{ob.publishAudit.runStatus ?? "—"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>media ready</span>
+                      <span style={ob.publishAudit.mediaReadyCount === 8 ? passStyle : failStyle}>{ob.publishAudit.mediaReadyCount}/8</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>publish job</span>
+                      <span style={monoStyle}>{ob.publishAudit.publishJobStatus ?? "none"}</span>
+                    </div>
+                    <div style={rowStyle}>
+                      <span style={labelStyle}>already published</span>
+                      <span style={ob.publishAudit.alreadyPublished ? warnStyle : passStyle}>{ob.publishAudit.alreadyPublished ? "yes (BLOCKED)" : "no ✓"}</span>
+                    </div>
+                    <div style={{ ...rowStyle, borderBottom: "none" }}>
+                      <span style={labelStyle}>duplicate guard</span>
+                      <span style={ob.publishAudit.duplicateGuardActive ? warnStyle : passStyle}>{ob.publishAudit.duplicateGuardActive ? "active (BLOCKED)" : "not active ✓"}</span>
+                    </div>
+                  </div>
+
+                  {/* 5. Next schedule */}
+                  <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 9 }}>
+                    <p style={{ color: "#9B9387", fontSize: 9, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 8 }}>5 · Next Expected Cron Times（Asia/Taipei）</p>
+                    {[
+                      { label: "03:00 daily_ideas", iso: ob.nextSchedule.ideas },
+                      { label: "17:00 daily_generate", iso: ob.nextSchedule.generate },
+                      { label: "20:00 daily_publish", iso: ob.nextSchedule.publish },
+                    ].map(({ label, iso }) => {
+                      const minsUntil = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
+                      const hoursUntil = Math.floor(minsUntil / 60);
+                      const minsRem = minsUntil % 60;
+                      const countdown = hoursUntil > 0 ? `${hoursUntil}h ${minsRem}m` : `${minsUntil}m`;
+                      return (
+                        <div key={label} style={{ display: "flex", gap: 10, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", alignItems: "center" }}>
+                          <span style={{ color: "#FB923C", fontSize: 10, fontWeight: 700, width: 130, flexShrink: 0 }}>{label}</span>
+                          <span style={monoStyle}>{formatTaiwan(iso)}</span>
+                          <span style={{ color: "#6F675E", fontSize: 9 }}>（{countdown} 後）</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                </div>
+              );
+            })()}
+          </SectionCard>
+
           {/* First Auto-Publish Rehearsal */}
           <SectionCard title="第一次正式自動發布前演練">
             <p style={{ color: "#6F675E", fontSize: 10, lineHeight: 1.6, marginBottom: 12 }}>
